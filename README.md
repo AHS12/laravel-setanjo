@@ -5,35 +5,28 @@
 [![GitHub Code Style Action Status](https://img.shields.io/github/workflow/status/ahs12/laravel-setanjo/Fix%20PHP%20code%20style%20issues?label=code%20style)](https://github.com/ahs12/laravel-setanjo/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
 [![Total Downloads](https://img.shields.io/packagist/dt/ahs12/laravel-setanjo.svg?style=flat-square)](https://packagist.org/packages/ahs12/laravel-setanjo)
 
-A powerful multi-tenant Laravel settings package that supports both strict and polymorphic tenancy modes with caching, validation, and a clean API.
+A powerful Laravel package for managing application settings with multi-tenant support. Store global settings or tenant-specific configurations with automatic type casting, caching, and a clean API.
 
 ## Features
 
-- 🏢 **Multi-Tenant Support**: Both strict and polymorphic tenancy modes
-- 🗃️ **Polymorphic Storage**: Store settings for any model type
-- 🏛️ **Global Settings**: Settings without any tenant scope
-- ⚡ **Caching**: Optional caching with configurable cache store
-- 🔒 **Validation**: Validate tenant models and prevent unauthorized access
-- 📦 **Clean API**: Simple, intuitive API inspired by popular packages
-- 🧪 **Fully Tested**: Comprehensive test suite included
-- ✅ **Type Safety**: Automatic type detection and conversion
+-   🏢 **Multi-Tenant Support**: Both strict and polymorphic tenancy modes
+-   🗃️ **Polymorphic Storage**: Store settings for any model type
+-   🏛️ **Global Settings**: Settings without any tenant scope
+-   ⚡ **Caching**: Optional caching with configurable cache store
+-   🔒 **Validation**: Validate tenant models and prevent unauthorized access
+-   📦 **Clean API**: Simple, intuitive API inspired by popular packages
+-   🧪 **Fully Tested**: Comprehensive test suite included
+-   ✅ **Type Safety**: Automatic type detection and conversion
 
 ## Installation
 
-Install the package via Composer:
-
 ```bash
 composer require ahs12/laravel-setanjo
-```
-
-Publish and run the migrations:
-
-```bash
 php artisan vendor:publish --tag="laravel-setanjo-migrations"
 php artisan migrate
 ```
 
-Optionally, publish the config file:
+Optionally, publish the configuration file:
 
 ```bash
 php artisan vendor:publish --tag="laravel-setanjo-config"
@@ -44,224 +37,120 @@ php artisan vendor:publish --tag="laravel-setanjo-config"
 ### Global Settings
 
 ```php
-use Ahs12\laravel-setanjo\Facades\Settings;
+use Ahs12\Setanjo\Facades\Settings;
 
-// Set a global setting
+// Set application-wide settings
 Settings::set('app_name', 'My Application');
+Settings::set('maintenance_mode', false);
 
-// Get a setting with default fallback
-$appName = Settings::get('app_name', 'Default App Name');
-
-// Check if setting exists
-if (Settings::has('maintenance_mode')) {
-    // Do something
-}
+// Get with default fallback
+$appName = Settings::get('app_name', 'Default Name');
 ```
 
 ### Tenant-Specific Settings
 
 ```php
-// For a specific model instance
+// Company-specific settings
 $company = Company::find(1);
 Settings::for($company)->set('company_name', 'Acme Corp');
-$companyName = Settings::for($company)->get('company_name');
-
-// Using the model macro (if enabled)
-$company->settings()->set('timezone', 'America/New_York');
-$timezone = $company->settings()->get('timezone', 'UTC');
+Settings::for($company)->set('timezone', 'America/New_York');
 
 // For tenant by ID (useful in polymorphic mode)
 Settings::forTenantId(1, Company::class)->set('setting', 'value');
+// For tenant by ID in strict mode (model class is optional)
+Settings::forTenantId(1)->set('setting', 'value');
+
+// User preferences
+$user = User::find(1);
+Settings::for($user)->set('theme', 'dark');
+Settings::for($user)->set('language', 'en');
+
+// Each tenant has isolated settings
+echo Settings::for($company)->get('theme'); // null
+echo Settings::for($user)->get('theme'); // 'dark'
 ```
 
-### Data Types
-
-laravel-setanjo automatically detects and handles different data types:
+### Automatic Type Casting
 
 ```php
-Settings::set('string_setting', 'Hello World');
-Settings::set('boolean_setting', true);
-Settings::set('integer_setting', 42);
-Settings::set('float_setting', 3.14);
-Settings::set('array_setting', ['key' => 'value']);
+Settings::set('is_active', true);        // Boolean
+Settings::set('max_users', 100);         // Integer
+Settings::set('rate', 4.99);             // Float
+Settings::set('features', ['api', 'sms']); // Array
 
-// Values are automatically cast to their original types when retrieved
-$bool = Settings::get('boolean_setting'); // Returns actual boolean true
-$array = Settings::get('array_setting'); // Returns actual array
+// Values are returned with correct types
+$isActive = Settings::get('is_active'); // Returns boolean true
+$features = Settings::get('features');  // Returns array
+```
+
+## Use Cases
+
+**SaaS Applications**
+
+```php
+// Per-tenant feature flags and limits
+Settings::for($tenant)->set('feature_api_enabled', true);
+Settings::for($tenant)->set('user_limit', 50);
+```
+
+**E-commerce Platforms**
+
+```php
+// Store-specific configurations
+Settings::for($store)->set('currency', 'USD');
+Settings::for($store)->set('tax_rate', 8.5);
+```
+
+**User Preferences**
+
+```php
+// Individual user settings
+Settings::for($user)->set('notification_email', true);
+Settings::for($user)->set('dashboard_layout', 'grid');
+```
+
+**Application Configuration**
+
+```php
+// Global app settings
+Settings::set('maintenance_mode', false);
+Settings::set('registration_enabled', true);
 ```
 
 ## Configuration
 
-The package is highly configurable. Here are the key configuration options:
+The package works out of the box, but you can customize it by publishing the configuration file:
 
-### Tenancy Modes
-
-#### Polymorphic Mode (Default)
-Allows multiple model types to have settings:
-
-```php
-// config/laravel-setanjo.php
-'tenancy_mode' => 'polymorphic',
-'allowed_tenant_models' => [
-    App\Models\Company::class,
-    App\Models\User::class,
-    App\Models\Branch::class,
-],
+```bash
+php artisan vendor:publish --tag="laravel-setanjo-config"
 ```
 
-#### Strict Mode
-Restricts to a single tenant model type:
+Then modify `config/setanjo.php` to configure tenant models and caching:
 
 ```php
-// config/laravel-setanjo.php
-'tenancy_mode' => 'strict',
-'strict_tenant_model' => App\Models\Company::class,
-```
-
-### Caching
-
-Enable caching for better performance:
-
-```php
-// config/laravel-setanjo.php
-'cache' => [
-    'enabled' => true,
-    'store' => null, // Use default cache store
-    'prefix' => 'laravel-setanjo',
-    'ttl' => 3600, // 1 hour
-],
-```
-
-### Default Settings
-
-Define default settings that can be installed via Artisan command:
-
-```php
-// config/laravel-setanjo.php
-'defaults' => [
-    'app_name' => [
-        'value' => 'My Laravel App',
-        'description' => 'Application name displayed to users',
+// config/setanjo.php
+return [
+    'tenancy_mode' => 'polymorphic', // or 'strict'
+    'allowed_tenant_models' => [
+        App\Models\User::class,
+        App\Models\Company::class,
     ],
-    'maintenance_mode' => [
-        'value' => false,
-        'description' => 'Enable maintenance mode',
+    'cache' => [
+        'enabled' => true,
+        'ttl' => 3600,
+        'store' => null, // Use default cache store
     ],
-],
+];
 ```
 
-## Advanced Usage
+## Documentation
 
-### Multiple Operations
-
-```php
-// Chain multiple operations
-Settings::for($company)
-    ->set('name', 'Acme Corp')
-    ->set('timezone', 'America/New_York')
-    ->set('currency', 'USD');
-
-// Get all settings for a tenant
-$allSettings = Settings::for($company)->all();
-
-// Remove specific setting
-Settings::for($company)->forget('old_setting');
-
-// Clear all settings for tenant
-Settings::for($company)->flush();
-```
-
-### Working with Different Tenants
-
-```php
-$company = Company::find(1);
-$user = User::find(1);
-
-// Each tenant has isolated settings
-Settings::for($company)->set('theme', 'dark');
-Settings::for($user)->set('theme', 'light');
-
-// Settings don't interfere with each other
-echo Settings::for($company)->get('theme'); // 'dark'
-echo Settings::for($user)->get('theme'); // 'light'
-```
-
-### Validation
-
-The package can validate tenant models:
-
-```php
-// This will throw InvalidTenantException if User is not in allowed_tenant_models
-Settings::for($user)->set('setting', 'value');
-
-// Disable validation if needed
-// config/laravel-setanjo.php
-'validation' => [
-    'enabled' => false,
-    'throw_exceptions' => false,
-],
-```
-
-## Artisan Commands
-
-### Install Default Settings
-
-```bash
-php artisan laravel-setanjo:install-defaults
-```
-
-Install with force (overwrites existing):
-
-```bash
-php artisan laravel-setanjo:install-defaults --force
-```
-
-### Clear Settings Cache
-
-```bash
-php artisan laravel-setanjo:clear-cache
-```
-
-## Database Schema
-
-The package creates a `settings` table with the following structure:
-
-```php
-Schema::create('settings', function (Blueprint $table) {
-    $table->id();
-    $table->string('key');
-    $table->longText('value')->nullable();
-    $table->text('description')->nullable();
-    $table->string('type')->default('string');
-    $table->nullableMorphs('tenantable'); // tenantable_type, tenantable_id
-    $table->timestamps();
-    
-    // Indexes for performance
-    $table->index(['key']);
-    $table->index(['tenantable_type', 'tenantable_id']);
-    $table->unique(['key', 'tenantable_type', 'tenantable_id']);
-});
-```
-
-## Performance Considerations
-
-- **Caching**: Enable caching in production for better performance
-- **Indexing**: The package automatically creates database indexes for optimal queries
-- **Lazy Loading**: Settings are loaded only when needed and cached in memory
-- **Bulk Operations**: Use `all()` method instead of multiple `get()` calls when possible
+For detailed documentation, advanced usage, and configuration options, visit our [documentation site](https://github.com/ahs12/laravel-setanjo/wiki).
 
 ## Testing
 
-Run the test suite:
-
 ```bash
 composer test
-```
-
-Run tests with coverage:
-
-```bash
-composer test-coverage
 ```
 
 ## Changelog
@@ -271,15 +160,6 @@ Please see [CHANGELOG](CHANGELOG.md) for more information on what has changed re
 ## Contributing
 
 Please see [CONTRIBUTING](CONTRIBUTING.md) for details.
-
-## Security Vulnerabilities
-
-Please review [our security policy](../../security/policy) on how to report security vulnerabilities.
-
-## Credits
-
-- [Your Name](https://github.com/yourusername)
-- [All Contributors](../../contributors)
 
 ## License
 
