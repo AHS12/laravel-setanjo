@@ -19,6 +19,7 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 class Setting extends Model
 {
     protected $table = 'settings';
+
     protected $fillable = [
         'key',
         'value',
@@ -110,6 +111,7 @@ class Setting extends Model
 
         if (! $typeValue) {
             $this->attributes['value'] = (string) $value;
+
             return;
         }
 
