@@ -84,12 +84,20 @@ class ClearCacheCommand extends Command
             return;
         }
 
-        // Option 3: Fallback - ask to flush entire store
+        // Option 3: Fallback - ask to flush entire store (if supported)
         $this->warn('Cache driver does not support selective clearing.');
 
         if ($this->confirm('Do you want to flush the entire cache store?')) {
-            $store->flush();
-            $this->info('Entire cache store flushed.');
+            try {
+                if (method_exists($store, 'flush')) {
+                    $store->flush();
+                    $this->info('Entire cache store flushed.');
+                } else {
+                    $this->error('Cache store does not support flushing. Please clear cache manually or use --tenant option.');
+                }
+            } catch (\Exception $e) {
+                $this->error('Failed to flush cache: '.$e->getMessage());
+            }
         } else {
             $this->info('Cache clearing cancelled.');
         }
@@ -154,7 +162,7 @@ class ClearCacheCommand extends Command
         $currentStore = config('setanjo.cache.store') ?: $defaultStore;
 
         return $currentStore === 'redis' ||
-               (is_null(config('setanjo.cache.store')) && $defaultStore === 'redis');
+            (is_null(config('setanjo.cache.store')) && $defaultStore === 'redis');
     }
 
     /**

@@ -26,7 +26,7 @@ class InvalidTenantException extends InvalidArgumentException
         $actualClass = is_object($tenant) ? get_class($tenant) : gettype($tenant);
         $message = "Invalid tenant type. Expected instance of [{$expectedClass}], got [{$actualClass}].";
 
-        return new static($message, $tenant, [$expectedClass]);
+        return new self($message, $tenant, [$expectedClass]);
     }
 
     /**
@@ -38,7 +38,7 @@ class InvalidTenantException extends InvalidArgumentException
         $allowed = implode(', ', $allowedClasses);
         $message = "Invalid tenant type. Expected one of [{$allowed}], got [{$actualClass}].";
 
-        return new static($message, $tenant, $allowedClasses);
+        return new self($message, $tenant, $allowedClasses);
     }
 
     /**
@@ -48,7 +48,7 @@ class InvalidTenantException extends InvalidArgumentException
     {
         $message = "Tenant not found: {$modelClass}#{$tenantId}";
 
-        return new static($message);
+        return new self($message);
     }
 
     /**
@@ -58,7 +58,7 @@ class InvalidTenantException extends InvalidArgumentException
     {
         $message = "Tenant configuration missing: {$configKey}";
 
-        return new static($message);
+        return new self($message);
     }
 
     public static function missingModelClassPolymorphic(): self
