@@ -72,21 +72,6 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Model Macro
-    |--------------------------------------------------------------------------
-    |
-    | Enable or disable the automatic registration of Eloquent model macros.
-    | When enabled, adds 'settings()' method to all Eloquent models for
-    | easy access to tenant-specific settings.
-    |
-    | Example: $user->settings()->get('theme', 'light')
-    |
-    */
-
-    'enable_model_macro' => env('SETANJO_ENABLE_MODEL_MACRO', true),
-
-    /*
-    |--------------------------------------------------------------------------
     | Cache Configuration
     |--------------------------------------------------------------------------
     |

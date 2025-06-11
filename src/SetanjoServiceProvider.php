@@ -14,8 +14,8 @@ class SetanjoServiceProvider extends PackageServiceProvider
     public function configurePackage(Package $package): void
     {
         $package
-            ->name('Setanjo')
-            ->hasConfigFile()
+            ->name('setanjo')
+            ->hasConfigFile('setanjo')
             ->hasMigration('create_setanjo_settings_table')
             ->hasCommands([
                 ClearCacheCommand::class,
@@ -27,7 +27,7 @@ class SetanjoServiceProvider extends PackageServiceProvider
     {
         // Register repository binding
         $this->app->bind(SettingsRepositoryInterface::class, function ($app) {
-            $driver = config('Setanjo.repository', 'database');
+            $driver = config('setanjo.repository', 'database');
 
             return match ($driver) {
                 'database' => new DatabaseSettingsRepository,
@@ -42,20 +42,5 @@ class SetanjoServiceProvider extends PackageServiceProvider
 
         // Register alias
         $this->app->alias('Setanjo', SetanjoManager::class);
-    }
-
-    public function packageBooted(): void
-    {
-        // Add model macro for easy settings access
-        if (config('Setanjo.enable_model_macro', true)) {
-            $this->addModelMacro();
-        }
-    }
-
-    protected function addModelMacro(): void
-    {
-        \Illuminate\Database\Eloquent\Model::macro('settings', function () {
-            return app('Setanjo')->for($this);
-        });
     }
 }
