@@ -36,11 +36,11 @@ class SetanjoServiceProvider extends PackageServiceProvider
         });
 
         // Register manager
-        $this->app->singleton('Setanjo', function ($app) {
+        $this->app->singleton('setanjo', function ($app) {
             return new SetanjoManager($app->make(SettingsRepositoryInterface::class));
         });
 
         // Register alias
-        $this->app->alias('Setanjo', SetanjoManager::class);
+        $this->app->alias('setanjo', SetanjoManager::class);
     }
 }

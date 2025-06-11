@@ -37,7 +37,7 @@ class Setting extends Model
      */
     public function getTable()
     {
-        return config('setanjo.table', $this->table);
+        return config('setanjo.table') ?: $this->table;
     }
 
     /**
@@ -50,24 +50,6 @@ class Setting extends Model
         return $this->morphTo($column);
     }
 
-    /**
-     * Get the parsed value based on type
-     */
-    // public function getValueAttribute($value): mixed
-    // {
-    //     if ($value === null) {
-    //         return null;
-    //     }
-
-    //     return match ($this->type) {
-    //         SettingType::BOOLEAN => filter_var($value, FILTER_VALIDATE_BOOLEAN),
-    //         SettingType::INTEGER => (int) $value,
-    //         SettingType::FLOAT => (float) $value,
-    //         SettingType::ARRAY , SettingType::JSON => json_decode($value, true),
-    //         SettingType::OBJECT => json_decode($value),
-    //         SettingType::STRING => $value,
-    //     };
-    // }
     public function getValueAttribute($value): mixed
     {
         if ($value === null) {
@@ -93,19 +75,15 @@ class Setting extends Model
         };
     }
 
-    /**
-     * Set the value attribute with proper encoding
-     */
-    // public function setValueAttribute($value): void
-    // {
-    //     $this->attributes['value'] = match ($this->type) {
-    //         SettingType::ARRAY , SettingType::JSON, SettingType::OBJECT => json_encode($value),
-    //         SettingType::BOOLEAN => $value ? '1' : '0',
-    //         default => (string) $value,
-    //     };
-    // }
     public function setValueAttribute($value): void
     {
+        // Handle null values explicitly
+        if ($value === null) {
+            $this->attributes['value'] = null;
+
+            return;
+        }
+
         // Get the raw type value
         $typeValue = $this->getRawOriginal('type') ?? $this->attributes['type'] ?? null;
 

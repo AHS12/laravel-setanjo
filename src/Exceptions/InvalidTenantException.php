@@ -63,7 +63,9 @@ class InvalidTenantException extends InvalidArgumentException
 
     public static function missingModelClassPolymorphic(): self
     {
-        throw new InvalidArgumentException('Model class required in polymorphic mode');
+        $message = 'Model class required in polymorphic mode';
+
+        return new self($message);
     }
 
     /**
