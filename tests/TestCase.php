@@ -2,9 +2,9 @@
 
 namespace Ahs12\Setanjo\Tests;
 
+use Ahs12\Setanjo\SetanjoServiceProvider;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Orchestra\Testbench\TestCase as Orchestra;
-use Ahs12\Setanjo\SetanjoServiceProvider;
 
 class TestCase extends Orchestra
 {
