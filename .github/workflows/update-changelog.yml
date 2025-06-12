@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   update:
@@ -15,8 +16,6 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-        with:
-          ref: main
 
       - name: Update Changelog
         uses: stefanzweifel/changelog-updater-action@v1
@@ -24,9 +23,11 @@ jobs:
           latest-version: ${{ github.event.release.name }}
           release-notes: ${{ github.event.release.body }}
 
-      - name: Commit updated CHANGELOG
-        uses: stefanzweifel/git-auto-commit-action@v5
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v6
         with:
-          branch: main
-          commit_message: Update CHANGELOG
-          file_pattern: CHANGELOG.md
+          commit-message: "Update CHANGELOG"
+          branch: changelog/update-${{ github.event.release.tag_name }}
+          title: "Update CHANGELOG for ${{ github.event.release.tag_name }}"
+          body: "This PR updates the changelog for ${{ github.event.release.tag_name }}"
+          base: main
