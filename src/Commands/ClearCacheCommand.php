@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Cache;
 class ClearCacheCommand extends Command
 {
     protected $signature = 'setanjo:clear-cache 
-                            {--tenant= : Clear cache for specific tenant (format: ModelClass:ID)}
+                            {--tenant= : Clear cache for specific tenant (format: App\\Models\\User:ID)}
                             {--all : Clear all setanjo cache}';
 
     protected $description = 'Clear setanjo settings cache';
@@ -31,6 +31,7 @@ class ClearCacheCommand extends Command
         $all = $this->option('all');
 
         if ($tenant) {
+            $tenant = $this->normalizeTenantKey($tenant);
             $this->clearTenantCache($tenant);
         } elseif ($all) {
             $this->clearAllCache();
@@ -39,6 +40,41 @@ class ClearCacheCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    /**
+     * Normalize tenant key to handle escaped backslashes
+     */
+    protected function normalizeTenantKey(string $tenantKey): string
+    {
+        // Try to reconstruct the proper namespace if backslashes are missing
+        if (! str_contains($tenantKey, '\\') && str_contains($tenantKey, 'ModelsUser:')) {
+            // Handle common Laravel pattern: AppModelsUser:ID -> App\Models\User:ID
+            $tenantKey = preg_replace('/^App([A-Z][a-z]+)+User:/', 'App\\Models\\User:', $tenantKey);
+        } elseif (! str_contains($tenantKey, '\\') && preg_match('/^([A-Z][a-z]+)+([A-Z][a-z]+):(\d+)$/', $tenantKey, $matches)) {
+            // General pattern reconstruction for missing backslashes
+            $fullClass = $matches[0];
+            $parts = preg_split('/(?=[A-Z])/', $fullClass, -1, PREG_SPLIT_NO_EMPTY);
+
+            if (count($parts) >= 3) {
+                // Assume App\Models\ModelName pattern
+                $reconstructed = $parts[0].'\\'.$parts[1].'\\'.implode('', array_slice($parts, 2));
+                $this->line("Auto-reconstructed: '{$reconstructed}'");
+                $tenantKey = $reconstructed;
+            }
+        }
+
+        // Handle double-escaped backslashes that might occur in command line
+        $tenantKey = str_replace('\\\\', '\\', $tenantKey);
+
+        // Validate format: ModelClass:ID
+        if (! preg_match('/^[A-Za-z\\\\]+:\d+$/', $tenantKey)) {
+            $this->error('Invalid tenant format. Use: ModelClass:ID (e.g., App\\Models\\User:1)');
+            $this->error('On Windows, try using quotes: --tenant="App\\Models\\User:1"');
+            exit(1);
+        }
+
+        return $tenantKey;
     }
 
     /**
@@ -51,6 +87,7 @@ class ClearCacheCommand extends Command
         Cache::store(config('setanjo.cache.store'))->forget($cacheKey);
 
         $this->info("Cleared cache for tenant: {$tenantKey}");
+        $this->line("Cache key used: {$cacheKey}");
     }
 
     /**

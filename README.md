@@ -5,7 +5,7 @@
 [![GitHub Code Style Action Status](https://img.shields.io/github/workflow/status/ahs12/laravel-setanjo/Fix%20PHP%20code%20style%20issues?label=code%20style)](https://github.com/ahs12/laravel-setanjo/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
 [![Total Downloads](https://img.shields.io/packagist/dt/ahs12/laravel-setanjo.svg?style=flat-square)](https://packagist.org/packages/ahs12/laravel-setanjo)
 
-A powerful Laravel package for managing application settings with multi-tenant support. Store global settings or tenant-specific configurations with automatic type casting, caching, and a clean API.
+A powerful Laravel package for managing application settings with multi-tenant support. Store global settings or tenant-specific configurations with automatic type casting, caching, and a clean API. Perfect for A/B testing, feature flags, and user preferences.
 
 ## Features
 
@@ -20,19 +20,65 @@ A powerful Laravel package for managing application settings with multi-tenant s
 
 ## Installation
 
+1. **Install the package:**
+
 ```bash
 composer require ahs12/laravel-setanjo
-php artisan vendor:publish --tag="laravel-setanjo-migrations"
+```
+
+2. **Publish and run migrations:**
+
+```bash
+php artisan vendor:publish --tag="setanjo-migrations"
 php artisan migrate
 ```
 
-Optionally, publish the configuration file:
+3. **Configure tenancy mode (optional):**
+
+By default, the package runs in **strict mode** (single tenant model type).
+
+For basic setup with User model, no configuration needed. For other models or multiple tenant types:
 
 ```bash
-php artisan vendor:publish --tag="laravel-setanjo-config"
+php artisan vendor:publish --tag="setanjo-config"
 ```
 
-## Quick Start
+## Quick Setup
+
+### Option 1: Strict Mode (Default - Single Tenant Type)
+
+Perfect for simple user preferences or single-model tenancy:
+
+```php
+// Uses App\Models\User by default
+// No configuration needed
+```
+
+### Option 2: Custom Strict Mode
+
+For using a different model as the single tenant type:
+
+```php
+// config/setanjo.php
+'tenancy_mode' => 'strict',
+'strict_tenant_model' => App\Models\Company::class,
+```
+
+### Option 3: Polymorphic Mode
+
+For multiple tenant model types (SaaS apps, complex multi-tenancy):
+
+```php
+// config/setanjo.php
+'tenancy_mode' => 'polymorphic',
+'allowed_tenant_models' => [
+    App\Models\User::class,
+    App\Models\Company::class,
+    App\Models\Organization::class,
+],
+```
+
+## Basic Usage
 
 ### Global Settings
 
@@ -47,30 +93,35 @@ Settings::set('maintenance_mode', false);
 $appName = Settings::get('app_name', 'Default Name');
 ```
 
-### Tenant-Specific Settings
+### Tenant Settings (Strict Mode)
 
 ```php
-// Company-specific settings
-$company = Company::find(1);
-Settings::for($company)->set('company_name', 'Acme Corp');
-Settings::for($company)->set('timezone', 'America/New_York');
-
-// For tenant by ID (useful in polymorphic mode)
-Settings::forTenantId(1, Company::class)->set('setting', 'value');
-// For tenant by ID in strict mode (model class is optional)
-Settings::forTenantId(1)->set('setting', 'value');
-
-// User preferences
+// User-specific settings (default tenant model)
 $user = User::find(1);
 Settings::for($user)->set('theme', 'dark');
 Settings::for($user)->set('language', 'en');
 
-// Each tenant has isolated settings
-echo Settings::for($company)->get('theme'); // null
+// Or by tenant ID
+Settings::forTenantId(1)->set('notifications', true);
+
 echo Settings::for($user)->get('theme'); // 'dark'
 ```
 
-### Automatic Type Casting
+### Tenant Settings (Polymorphic Mode)
+
+```php
+// Different model types as tenants
+$user = User::find(1);
+$company = Company::find(1);
+
+Settings::for($user)->set('theme', 'dark');
+Settings::for($company)->set('timezone', 'UTC');
+
+// Or by tenant ID with model class
+Settings::forTenantId(1, Company::class)->set('currency', 'USD');
+```
+
+### Type Casting
 
 ```php
 Settings::set('is_active', true);        // Boolean
@@ -80,67 +131,47 @@ Settings::set('features', ['api', 'sms']); // Array
 
 // Values are returned with correct types
 $isActive = Settings::get('is_active'); // Returns boolean true
-$features = Settings::get('features');  // Returns array
 ```
 
-## Use Cases
+## Common Use Cases
 
-**SaaS Applications**
-
-```php
-// Per-tenant feature flags and limits
-Settings::for($tenant)->set('feature_api_enabled', true);
-Settings::for($tenant)->set('user_limit', 50);
-```
-
-**E-commerce Platforms**
+### User Preferences
 
 ```php
-// Store-specific configurations
-Settings::for($store)->set('currency', 'USD');
-Settings::for($store)->set('tax_rate', 8.5);
-```
-
-**User Preferences**
-
-```php
-// Individual user settings
+$user = auth()->user();
 Settings::for($user)->set('notification_email', true);
 Settings::for($user)->set('dashboard_layout', 'grid');
+Settings::for($user)->set('timezone', 'America/New_York');
 ```
 
-**Application Configuration**
+### Application Configuration
 
 ```php
-// Global app settings
 Settings::set('maintenance_mode', false);
 Settings::set('registration_enabled', true);
+Settings::set('api_rate_limit', 1000);
 ```
 
-## Configuration
-
-The package works out of the box, but you can customize it by publishing the configuration file:
-
-```bash
-php artisan vendor:publish --tag="laravel-setanjo-config"
-```
-
-Then modify `config/setanjo.php` to configure tenant models and caching:
+### Multi-Tenant SaaS (Polymorphic Mode)
 
 ```php
-// config/setanjo.php
-return [
-    'tenancy_mode' => 'polymorphic', // or 'strict'
-    'allowed_tenant_models' => [
-        App\Models\User::class,
-        App\Models\Company::class,
-    ],
-    'cache' => [
-        'enabled' => true,
-        'ttl' => 3600,
-        'store' => null, // Use default cache store
-    ],
-];
+// Company-level settings
+Settings::for($company)->set('feature_api_enabled', true);
+Settings::for($company)->set('user_limit', 50);
+
+// User preferences within company
+Settings::for($user)->set('email_notifications', false);
+```
+
+## Environment Variables
+
+You can configure the package using environment variables:
+
+```env
+SETANJO_TENANCY_MODE=strict
+SETANJO_STRICT_TENANT_MODEL="App\Models\User"
+SETANJO_CACHE_ENABLED=true
+SETANJO_CACHE_TTL=3600
 ```
 
 ## Documentation

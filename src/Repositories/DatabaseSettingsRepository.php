@@ -32,8 +32,8 @@ class DatabaseSettingsRepository implements SettingsRepositoryInterface
         $tenantKey = $this->getTenantKey($tenant);
         $this->loadedSettings[$tenantKey][$key] = $value;
 
-        // Clear cache
-        $this->clearCache($tenant);
+        // update cache
+        $this->updateCache($tenant);
     }
 
     public function has(string $key, $tenant = null): bool
@@ -53,8 +53,8 @@ class DatabaseSettingsRepository implements SettingsRepositoryInterface
         $tenantKey = $this->getTenantKey($tenant);
         unset($this->loadedSettings[$tenantKey][$key]);
 
-        // Clear cache
-        $this->clearCache($tenant);
+        // update cache
+        $this->updateCache($tenant);
     }
 
     public function all($tenant = null): Collection
@@ -73,6 +73,7 @@ class DatabaseSettingsRepository implements SettingsRepositoryInterface
         $tenantKey = $this->getTenantKey($tenant);
         $this->loadedSettings[$tenantKey] = [];
 
+        // Clear cache
         $this->clearCache($tenant);
     }
 
@@ -188,6 +189,35 @@ class DatabaseSettingsRepository implements SettingsRepositoryInterface
             // Clear specific cache key
             $cacheKey = $this->getCacheKey($tenant);
             $store->forget($cacheKey);
+        }
+    }
+
+    /**
+     * Update cache with current loaded settings
+     */
+    protected function updateCache($tenant): void
+    {
+        if (! config('setanjo.cache.enabled', true)) {
+            return;
+        }
+
+        $tenantKey = $this->getTenantKey($tenant);
+
+        // Only update if we have loaded settings for this tenant
+        if (! isset($this->loadedSettings[$tenantKey])) {
+            return;
+        }
+
+        $cacheKey = $this->getCacheKey($tenant);
+        $store = Cache::store(config('setanjo.cache.store'));
+        $ttl = config('setanjo.cache.ttl', 3600);
+
+        // Use tags if supported
+        if ($this->supportsCacheTags($store)) {
+            $store->tags(['setanjo', 'settings'])
+                ->put($cacheKey, $this->loadedSettings[$tenantKey], $ttl);
+        } else {
+            $store->put($cacheKey, $this->loadedSettings[$tenantKey], $ttl);
         }
     }
 }

@@ -53,7 +53,7 @@ return [
     | Define the single model class that can be used as tenant
     |
     */
-    'strict_tenant_model' => env('SETANJO_STRICT_TENANT_MODEL', true),
+    'strict_tenant_model' => env('SETANJO_STRICT_TENANT_MODEL', 'App\\Models\\User'), // App\Models\User::class - common default Laravel user model.
 
     /*
     |--------------------------------------------------------------------------
@@ -79,7 +79,7 @@ return [
     |
     */
     'cache' => [
-        'enabled' => env('SETANJO_CACHE_ENABLED', true),
+        'enabled' => env('SETANJO_CACHE_ENABLED', false),
         'store' => env('SETANJO_CACHE_STORE', null), // null = use Laravel's default
         'prefix' => env('SETANJO_CACHE_PREFIX', 'setanjo'),
         'ttl' => env('SETANJO_CACHE_TTL', 3600), // 1 hour
@@ -104,6 +104,7 @@ return [
     |--------------------------------------------------------------------------
     |
     | Default settings that will be created when running artisan commands
+    | php artisan setanjo:install-defaults
     |
     */
     'defaults' => [
