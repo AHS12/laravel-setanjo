@@ -1,9 +1,11 @@
 # laravel-setanjo - Multi-Tenant Laravel Settings Package
 
-[![Latest Version on Packagist](https://img.shields.io/packagist/v/ahs12/laravel-setanjo.svg?style=flat-square)](https://packagist.org/packages/ahs12/laravel-setanjo)
-[![GitHub Tests Action Status](https://img.shields.io/github/workflow/status/ahs12/laravel-setanjo/run-tests?label=tests)](https://github.com/ahs12/laravel-setanjo/actions?query=workflow%3Arun-tests+branch%3Amain)
-[![GitHub Code Style Action Status](https://img.shields.io/github/workflow/status/ahs12/laravel-setanjo/Fix%20PHP%20code%20style%20issues?label=code%20style)](https://github.com/ahs12/laravel-setanjo/actions?query=workflow%3A"Fix+PHP+code+style+issues"+branch%3Amain)
-[![Total Downloads](https://img.shields.io/packagist/dt/ahs12/laravel-setanjo.svg?style=flat-square)](https://packagist.org/packages/ahs12/laravel-setanjo)
+<p align="center">
+<a href="https://github.com/ahs12/laravel-setanjo/actions"><img src="https://github.com/ahs12/laravel-setanjo/actions/workflows/run-tests.yml/badge.svg" alt="Build Status"></a>
+<a href="https://packagist.org/packages/ahs12/laravel-setanjo"><img src="https://img.shields.io/packagist/dt/ahs12/laravel-setanjo" alt="Total Downloads"></a>
+<a href="https://packagist.org/packages/ahs12/laravel-setanjo"><img src="https://img.shields.io/packagist/v/ahs12/laravel-setanjo" alt="Latest Stable Version"></a>
+<a href="https://packagist.org/packages/ahs12/laravel-setanjo"><img src="https://img.shields.io/packagist/l/ahs12/laravel-setanjo" alt="License"></a>
+</p>
 
 A powerful Laravel package for managing application settings with multi-tenant support. Store global settings or tenant-specific configurations with automatic type casting, caching, and a clean API. Perfect for A/B testing, feature flags, and user preferences.
 
@@ -17,6 +19,10 @@ A powerful Laravel package for managing application settings with multi-tenant s
 -   📦 **Clean API**: Simple, intuitive API inspired by popular packages
 -   🧪 **Fully Tested**: Comprehensive test suite included
 -   ✅ **Type Safety**: Automatic type detection and conversion
+
+## Requirements
+- PHP 8.2 or higher
+- Laravel 10.0 or higher
 
 ## Installation
 
@@ -128,9 +134,16 @@ Settings::set('is_active', true);        // Boolean
 Settings::set('max_users', 100);         // Integer
 Settings::set('rate', 4.99);             // Float
 Settings::set('features', ['api', 'sms']); // Array
+Settings::set('config', '{"theme": "dark", "lang": "en"}'); // JSON string
+Settings::set('metadata',['version' => '1.0', 'author' => 'John']); // Object
 
 // Values are returned with correct types
 $isActive = Settings::get('is_active'); // Returns boolean true
+$maxUsers = Settings::get('max_users'); // Returns integer 100
+$rate = Settings::get('rate');          // Returns float 4.99
+$features = Settings::get('features');  // Returns array ['api', 'sms']
+$config = Settings::get('config');      // Returns array ['theme' => 'dark', 'lang' => 'en']
+$metadata = Settings::get('metadata');  // Returns object with version and author properties
 ```
 
 ## Common Use Cases
@@ -161,17 +174,6 @@ Settings::for($company)->set('user_limit', 50);
 
 // User preferences within company
 Settings::for($user)->set('email_notifications', false);
-```
-
-## Environment Variables
-
-You can configure the package using environment variables:
-
-```env
-SETANJO_TENANCY_MODE=strict
-SETANJO_STRICT_TENANT_MODEL="App\Models\User"
-SETANJO_CACHE_ENABLED=true
-SETANJO_CACHE_TTL=3600
 ```
 
 ## Documentation
