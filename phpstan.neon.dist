@@ -10,3 +10,6 @@ parameters:
     tmpDir: build/phpstan
     checkOctaneCompatibility: true
     checkModelProperties: true
+    ignoreErrors:
+        - "#Called 'env' outside of the config directory#"
+        - '#Trait .* is used zero times and is not analysed#'
