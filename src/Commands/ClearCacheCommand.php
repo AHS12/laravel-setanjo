@@ -10,7 +10,8 @@ class ClearCacheCommand extends Command
 {
     protected $signature = 'setanjo:clear-cache 
                             {--tenant= : Clear cache for specific tenant (format: App\\Models\\User:ID)}
-                            {--all : Clear all setanjo cache}';
+                            {--all : Clear all setanjo cache}
+                            {--debug : Show debug information}';
 
     protected $description = 'Clear setanjo settings cache';
 
@@ -29,6 +30,11 @@ class ClearCacheCommand extends Command
 
         $tenant = $this->option('tenant');
         $all = $this->option('all');
+        $debug = $this->option('debug');
+
+        if ($debug) {
+            $this->showDebugInfo();
+        }
 
         if ($tenant) {
             $tenant = $this->normalizeTenantKey($tenant);
@@ -42,32 +48,38 @@ class ClearCacheCommand extends Command
         return self::SUCCESS;
     }
 
-    /**
-     * Normalize tenant key to handle escaped backslashes
-     */
+    protected function showDebugInfo(): void
+    {
+        $this->info('=== Cache Debug Information ===');
+        $this->line('Cache Default Store: '.config('cache.default'));
+        $this->line('Setanjo Cache Store: '.(config('setanjo.cache.store') ?: 'default'));
+        $this->line('Setanjo Cache Prefix: '.config('setanjo.cache.prefix', 'setanjo'));
+        $this->line('Cache TTL: '.config('setanjo.cache.ttl', 3600).' seconds');
+
+        $testKey = $this->buildCacheKey('global');
+        $this->line('Example Cache Key: '.$testKey);
+        $this->line('================================');
+    }
+
     protected function normalizeTenantKey(string $tenantKey): string
     {
-        // Try to reconstruct the proper namespace if backslashes are missing
         if (! str_contains($tenantKey, '\\') && str_contains($tenantKey, 'ModelsUser:')) {
-            // Handle common Laravel pattern: AppModelsUser:ID -> App\Models\User:ID
             $tenantKey = preg_replace('/^App([A-Z][a-z]+)+User:/', 'App\\Models\\User:', $tenantKey);
         } elseif (! str_contains($tenantKey, '\\') && preg_match('/^([A-Z][a-z]+)+([A-Z][a-z]+):(\d+)$/', $tenantKey, $matches)) {
-            // General pattern reconstruction for missing backslashes
             $fullClass = $matches[0];
             $parts = preg_split('/(?=[A-Z])/', $fullClass, -1, PREG_SPLIT_NO_EMPTY);
 
             if (count($parts) >= 3) {
-                // Assume App\Models\ModelName pattern
                 $reconstructed = $parts[0].'\\'.$parts[1].'\\'.implode('', array_slice($parts, 2));
-                $this->line("Auto-reconstructed: '{$reconstructed}'");
+                if ($this->option('debug')) {
+                    $this->line("Auto-reconstructed: '{$reconstructed}'");
+                }
                 $tenantKey = $reconstructed;
             }
         }
 
-        // Handle double-escaped backslashes that might occur in command line
         $tenantKey = str_replace('\\\\', '\\', $tenantKey);
 
-        // Validate format: ModelClass:ID
         if (! preg_match('/^[A-Za-z\\\\]+:\d+$/', $tenantKey)) {
             $this->error('Invalid tenant format. Use: ModelClass:ID (e.g., App\\Models\\User:1)');
             $this->error('On Windows, try using quotes: --tenant="App\\Models\\User:1"');
@@ -78,16 +90,30 @@ class ClearCacheCommand extends Command
     }
 
     /**
-     * Clear cache for specific tenant
+     * Clear cache for specific tenant using same logic as repository
      */
     protected function clearTenantCache(string $tenantKey): void
     {
         $cacheKey = $this->buildCacheKey($tenantKey);
+        $store = Cache::store(config('setanjo.cache.store'));
 
-        Cache::store(config('setanjo.cache.store'))->forget($cacheKey);
+        if ($this->option('debug')) {
+            $hasCache = $store->has($cacheKey);
+            $this->line("Cache key '{$cacheKey}' exists: ".($hasCache ? 'YES' : 'NO'));
+        }
+
+        // Use same logic as repository
+        $success = $this->clearCacheUsingRepositoryLogic($store, $cacheKey);
+
+        if ($this->option('debug')) {
+            $this->line('Cache clear result: '.($success ? 'SUCCESS' : 'FAILED'));
+
+            // Verify it's gone
+            $stillExists = $store->has($cacheKey);
+            $this->line('Cache still exists after clear: '.($stillExists ? 'YES' : 'NO'));
+        }
 
         $this->info("Cleared cache for tenant: {$tenantKey}");
-        $this->line("Cache key used: {$cacheKey}");
     }
 
     /**
@@ -96,88 +122,160 @@ class ClearCacheCommand extends Command
     protected function clearGlobalCache(): void
     {
         $cacheKey = $this->buildCacheKey('global');
+        $store = Cache::store(config('setanjo.cache.store'));
 
-        Cache::store(config('setanjo.cache.store'))->forget($cacheKey);
+        if ($this->option('debug')) {
+            $hasCache = $store->has($cacheKey);
+            $this->line("Global cache key '{$cacheKey}' exists: ".($hasCache ? 'YES' : 'NO'));
+        }
+
+        // Use same logic as repository
+        $success = $this->clearCacheUsingRepositoryLogic($store, $cacheKey);
+
+        if ($this->option('debug')) {
+            $this->line('Cache clear result: '.($success ? 'SUCCESS' : 'FAILED'));
+
+            // Verify it's gone
+            $stillExists = $store->has($cacheKey);
+            $this->line('Cache still exists after clear: '.($stillExists ? 'YES' : 'NO'));
+        }
 
         $this->info('Cleared global setanjo cache.');
     }
 
     /**
-     * Clear all setanjo cache using Laravel's cache methods
+     * Clear all setanjo cache
      */
     protected function clearAllCache(): void
     {
         $store = Cache::store(config('setanjo.cache.store'));
 
-        // Option 1: Use pattern matching for Redis
-        if ($this->isRedisStore()) {
-            $this->clearRedisPatternCache($store);
-
-            return;
-        }
-
-        // Option 2: Clear known cache keys (safer approach)
-        if ($this->clearKnownCacheKeys($store)) {
-            return;
-        }
-
-        // Option 3: Fallback - ask to flush entire store (if supported)
-        $this->warn('Cache driver does not support selective clearing.');
-
-        if ($this->confirm('Do you want to flush the entire cache store?')) {
-            try {
-                if (method_exists($store, 'flush')) {
-                    $store->flush();
-                    $this->info('Entire cache store flushed.');
-                } else {
-                    $this->error('Cache store does not support flushing. Please clear cache manually or use --tenant option.');
-                }
-            } catch (\Exception $e) {
-                $this->error('Failed to flush cache: '.$e->getMessage());
-            }
-        } else {
-            $this->info('Cache clearing cancelled.');
-        }
-    }
-
-    /**
-     * Clear known cache keys from database
-     */
-    protected function clearKnownCacheKeys($store): bool
-    {
         try {
+            // If cache supports tags, clear all setanjo cache at once
+            if ($this->supportsCacheTags($store)) {
+                if ($this->option('debug')) {
+                    $this->line('Using cache tags to clear all setanjo cache...');
+                }
+
+                $store->tags(['setanjo'])->flush();
+                $this->info('Cleared all setanjo cache using tags.');
+
+                return;
+            }
+
+            // Fallback: Clear individual cache entries
+            $clearedCount = 0;
+
             // Get all unique tenant combinations from database
             $tenants = \DB::table(config('setanjo.table', 'settings'))
                 ->select('tenantable_type', 'tenantable_id')
+                ->whereNotNull('tenantable_type')
+                ->whereNotNull('tenantable_id')
                 ->distinct()
                 ->get();
 
-            $clearedCount = 0;
+            if ($this->option('debug')) {
+                $this->line('Found '.$tenants->count().' unique tenant combinations in database');
+            }
 
             // Clear global cache
             $globalKey = $this->buildCacheKey('global');
-            $store->forget($globalKey);
+            if ($this->option('debug')) {
+                $hasGlobalCache = $store->has($globalKey);
+                $this->line('Global cache exists: '.($hasGlobalCache ? 'YES' : 'NO'));
+            }
+
+            $success = $this->clearCacheUsingRepositoryLogic($store, $globalKey);
             $clearedCount++;
+
+            if ($this->option('debug')) {
+                $this->line('Cleared global cache: '.($success ? 'SUCCESS' : 'FAILED'));
+            }
 
             // Clear each tenant's cache
             foreach ($tenants as $tenant) {
                 if ($tenant->tenantable_type && $tenant->tenantable_id) {
                     $tenantKey = "{$tenant->tenantable_type}:{$tenant->tenantable_id}";
                     $cacheKey = $this->buildCacheKey($tenantKey);
-                    $store->forget($cacheKey);
+
+                    if ($this->option('debug')) {
+                        $hasTenantCache = $store->has($cacheKey);
+                        $this->line("Tenant cache '{$tenantKey}' exists: ".($hasTenantCache ? 'YES' : 'NO'));
+                    }
+
+                    $success = $this->clearCacheUsingRepositoryLogic($store, $cacheKey);
                     $clearedCount++;
+
+                    if ($this->option('debug')) {
+                        $this->line("Cleared tenant cache '{$tenantKey}': ".($success ? 'SUCCESS' : 'FAILED'));
+                    }
                 }
             }
 
-            $this->info("Cleared {$clearedCount} setanjo cache keys.");
+            $this->info("Processed {$clearedCount} setanjo cache keys.");
 
-            return true;
+            // Verification
+            if ($this->option('debug')) {
+                $this->line('');
+                $this->line('=== Verification ===');
+
+                $globalExists = $store->has($globalKey);
+                $this->line('Global cache still exists: '.($globalExists ? 'YES' : 'NO'));
+
+                $verifiedCount = 0;
+                foreach ($tenants->take(3) as $tenant) {
+                    if ($tenant->tenantable_type && $tenant->tenantable_id) {
+                        $tenantKey = "{$tenant->tenantable_type}:{$tenant->tenantable_id}";
+                        $cacheKey = $this->buildCacheKey($tenantKey);
+                        $exists = $store->has($cacheKey);
+                        $this->line("Tenant cache '{$tenantKey}' still exists: ".($exists ? 'YES' : 'NO'));
+                        if (! $exists) {
+                            $verifiedCount++;
+                        }
+                    }
+                }
+
+                $this->line('Verification: '.$verifiedCount.'/'.min(3, $tenants->count()).' tenant caches successfully cleared');
+            }
 
         } catch (\Exception $e) {
-            $this->error('Failed to clear known cache keys: '.$e->getMessage());
-
-            return false;
+            $this->error('Failed to clear cache: '.$e->getMessage());
+            if ($this->option('debug')) {
+                $this->error('Exception details: '.$e->getTraceAsString());
+            }
         }
+    }
+
+    /**
+     * Clear cache using the same logic as the repository
+     */
+    protected function clearCacheUsingRepositoryLogic($store, string $cacheKey): bool
+    {
+        // Use tags if supported (same as repository)
+        if ($this->supportsCacheTags($store)) {
+            return $store->tags(['setanjo', 'settings'])->forget($cacheKey);
+        } else {
+            return $store->forget($cacheKey);
+        }
+    }
+
+    /**
+     * Check if cache store supports tags (copied from repository)
+     */
+    protected function supportsCacheTags($store): bool
+    {
+        return method_exists($store, 'tags') &&
+            in_array($this->getCurrentCacheDriver(), ['redis', 'memcached']);
+    }
+
+    /**
+     * Get current cache driver name (copied from repository)
+     */
+    protected function getCurrentCacheDriver(): string
+    {
+        $storeConfig = config('setanjo.cache.store');
+
+        return $storeConfig ?: config('cache.default');
     }
 
     /**
@@ -188,54 +286,5 @@ class ClearCacheCommand extends Command
         $prefix = config('setanjo.cache.prefix', 'setanjo');
 
         return "{$prefix}:settings:{$tenantKey}";
-    }
-
-    /**
-     * Check if using Redis store
-     */
-    protected function isRedisStore(): bool
-    {
-        $defaultStore = config('cache.default');
-        $currentStore = config('setanjo.cache.store') ?: $defaultStore;
-
-        return $currentStore === 'redis' ||
-            (is_null(config('setanjo.cache.store')) && $defaultStore === 'redis');
-    }
-
-    /**
-     * Clear Redis cache using pattern matching
-     */
-    protected function clearRedisPatternCache($store): void
-    {
-        try {
-            // Try different methods to get Redis connection
-            $redis = null;
-
-            if (method_exists($store, 'getRedis')) {
-                $redis = $store->getRedis();
-            } elseif (method_exists($store, 'connection')) {
-                $redis = $store->connection();
-            } else {
-                // Fallback to Laravel's Redis facade
-                $redis = \Illuminate\Support\Facades\Redis::connection();
-            }
-
-            $prefix = config('setanjo.cache.prefix', 'setanjo');
-            $pattern = "{$prefix}:settings:*";
-
-            $keys = $redis->keys($pattern);
-
-            if (! empty($keys)) {
-                $redis->del($keys);
-                $this->info('Cleared '.count($keys).' setanjo cache keys from Redis.');
-            } else {
-                $this->info('No setanjo cache keys found in Redis.');
-            }
-
-        } catch (\Exception $e) {
-            $this->error('Failed to clear Redis cache: '.$e->getMessage());
-            $this->info('Falling back to known cache keys method...');
-            $this->clearKnownCacheKeys($store);
-        }
     }
 }

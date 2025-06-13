@@ -181,13 +181,13 @@ class DatabaseSettingsRepository implements SettingsRepositoryInterface
         }
 
         $store = Cache::store(config('setanjo.cache.store'));
+        $cacheKey = $this->getCacheKey($tenant);
 
         // Use tags if supported
         if ($this->supportsCacheTags($store)) {
-            $store->tags(['setanjo'])->flush();
+            $store->tags(['setanjo', 'settings'])->forget($cacheKey);
         } else {
             // Clear specific cache key
-            $cacheKey = $this->getCacheKey($tenant);
             $store->forget($cacheKey);
         }
     }

@@ -96,7 +96,7 @@ class Setting extends Model
         $type = SettingType::from($typeValue);
 
         $this->attributes['value'] = match ($type) {
-            SettingType::ARRAY , SettingType::JSON, SettingType::OBJECT => json_encode($value),
+            SettingType::ARRAY , SettingType::JSON, SettingType::OBJECT => json_encode($value, JSON_THROW_ON_ERROR),
             SettingType::BOOLEAN => $value ? '1' : '0',
             default => (string) $value,
         };
