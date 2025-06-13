@@ -4,7 +4,6 @@ namespace Ahs12\Setanjo\Tests\Feature;
 
 use Ahs12\Setanjo\Facades\Settings;
 use Ahs12\Setanjo\Tests\Models\User;
-use Ahs12\Setanjo\Tests\Models\Company;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Config;
 
@@ -26,18 +25,18 @@ describe('Clear Cache Command', function () {
 
     test('it can clear tenant specific cache', function () {
         $user = User::create(['name' => 'John Doe', 'email' => 'john@example.com']);
-        
+
         Settings::for($user)->set('user_setting', 'user_value');
 
         $this->artisan('setanjo:clear-cache', [
-            '--tenant' => 'Ahs12\\Setanjo\\Tests\\Models\\User:' . $user->id
+            '--tenant' => 'Ahs12\\Setanjo\\Tests\\Models\\User:'.$user->id,
         ])
             ->assertExitCode(0);
     });
 
     test('it can clear all cache', function () {
         Settings::set('global_setting', 'global_value');
-        
+
         $user = User::create(['name' => 'John Doe', 'email' => 'john@example.com']);
         Settings::for($user)->set('user_setting', 'user_value');
 
@@ -84,7 +83,7 @@ describe('Install Defaults Command', function () {
     test('it can force reinstall default settings', function () {
         Settings::set('app_name', 'Old Name');
         Settings::set('theme', 'light');
-        
+
         config()->set('setanjo.defaults', [
             'app_name' => [
                 'value' => 'New Name',
@@ -103,7 +102,7 @@ describe('Install Defaults Command', function () {
 
     test('it skips existing settings without force', function () {
         Settings::set('app_name', 'Existing App');
-        
+
         config()->set('setanjo.defaults', [
             'app_name' => [
                 'value' => 'New App',
@@ -139,7 +138,7 @@ describe('Install Defaults Command', function () {
 
     test('it shows installation summary', function () {
         Settings::set('existing_setting', 'value');
-        
+
         config()->set('setanjo.defaults', [
             'existing_setting' => 'new_value',
             'new_setting' => 'value',
@@ -175,7 +174,7 @@ describe('Commands Integration', function () {
     test('commands work together', function () {
         // Install some defaults
         config()->set('setanjo.defaults', [
-            'test_setting' => 'test_value'
+            'test_setting' => 'test_value',
         ]);
 
         $this->artisan('setanjo:install-defaults')
@@ -193,9 +192,9 @@ describe('Commands Integration', function () {
 
     test('install defaults then clear specific tenant cache', function () {
         $user = User::create(['name' => 'Test User', 'email' => 'test@example.com']);
-        
+
         config()->set('setanjo.defaults', [
-            'user_theme' => 'blue'
+            'user_theme' => 'blue',
         ]);
 
         // Install defaults globally
@@ -207,7 +206,7 @@ describe('Commands Integration', function () {
 
         // Clear tenant cache
         $this->artisan('setanjo:clear-cache', [
-            '--tenant' => 'Ahs12\\Setanjo\\Tests\\Models\\User:' . $user->id
+            '--tenant' => 'Ahs12\\Setanjo\\Tests\\Models\\User:'.$user->id,
         ])
             ->assertExitCode(0);
 
@@ -218,7 +217,7 @@ describe('Commands Integration', function () {
 
     test('force install after cache operations', function () {
         config()->set('setanjo.defaults', [
-            'original_setting' => 'original_value'
+            'original_setting' => 'original_value',
         ]);
 
         // Install defaults
@@ -231,7 +230,7 @@ describe('Commands Integration', function () {
 
         // Update config and force reinstall
         config()->set('setanjo.defaults', [
-            'original_setting' => 'updated_value'
+            'original_setting' => 'updated_value',
         ]);
 
         $this->artisan('setanjo:install-defaults --force')
