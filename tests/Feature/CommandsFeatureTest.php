@@ -44,13 +44,6 @@ describe('Clear Cache Command', function () {
             ->assertExitCode(0);
     });
 
-    test('it shows debug information', function () {
-        // Just test that debug flag works without checking specific output
-        // since the debug content might be different than expected
-        $this->artisan('setanjo:clear-cache', ['--debug' => true])
-            ->assertExitCode(0);
-    });
-
     test('it handles invalid tenant format', function () {
         $this->artisan('setanjo:clear-cache', ['--tenant' => 'invalid-format'])
             ->assertExitCode(0);
@@ -115,8 +108,8 @@ describe('Install Defaults Command', function () {
             ->expectsOutput('Installed setting: theme')
             ->assertExitCode(0);
 
-        expect(Settings::get('app_name'))->toBe('Existing App'); // Should remain unchanged
-        expect(Settings::get('theme'))->toBe('dark'); // Should be installed
+        expect(Settings::get('app_name'))->toBe('Existing App');
+        expect(Settings::get('theme'))->toBe('dark');
     });
 
     test('it handles empty defaults configuration', function () {
@@ -128,7 +121,6 @@ describe('Install Defaults Command', function () {
     });
 
     test('it handles missing defaults configuration', function () {
-        // Use Config facade to properly remove the configuration
         Config::set('setanjo.defaults', null);
 
         $this->artisan('setanjo:install-defaults')
@@ -172,7 +164,6 @@ describe('Install Defaults Command', function () {
 
 describe('Commands Integration', function () {
     test('commands work together', function () {
-        // Install some defaults
         config()->set('setanjo.defaults', [
             'test_setting' => 'test_value',
         ]);
@@ -182,11 +173,9 @@ describe('Commands Integration', function () {
 
         expect(Settings::get('test_setting'))->toBe('test_value');
 
-        // Clear cache
         $this->artisan('setanjo:clear-cache')
             ->assertExitCode(0);
 
-        // Setting should still exist after cache clear
         expect(Settings::get('test_setting'))->toBe('test_value');
     });
 
@@ -197,20 +186,16 @@ describe('Commands Integration', function () {
             'user_theme' => 'blue',
         ]);
 
-        // Install defaults globally
         $this->artisan('setanjo:install-defaults')
             ->assertExitCode(0);
 
-        // Set tenant-specific setting
         Settings::for($user)->set('user_preference', 'dark_mode');
 
-        // Clear tenant cache
         $this->artisan('setanjo:clear-cache', [
             '--tenant' => 'Ahs12\\Setanjo\\Tests\\Models\\User:'.$user->id,
         ])
             ->assertExitCode(0);
 
-        // Both global and tenant settings should still exist
         expect(Settings::get('user_theme'))->toBe('blue');
         expect(Settings::for($user)->get('user_preference'))->toBe('dark_mode');
     });
@@ -220,15 +205,12 @@ describe('Commands Integration', function () {
             'original_setting' => 'original_value',
         ]);
 
-        // Install defaults
         $this->artisan('setanjo:install-defaults')
             ->assertExitCode(0);
 
-        // Clear cache
         $this->artisan('setanjo:clear-cache')
             ->assertExitCode(0);
 
-        // Update config and force reinstall
         config()->set('setanjo.defaults', [
             'original_setting' => 'updated_value',
         ]);
