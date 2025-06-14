@@ -1,4 +1,4 @@
-# laravel-setanjo - Multi-Tenant Laravel Settings Package
+# laravel-setanjo - Laravel Settings Package with Multi-Tenant Support
 
 <p align="center">
 <a href="https://github.com/ahs12/laravel-setanjo/actions"><img src="https://github.com/ahs12/laravel-setanjo/actions/workflows/run-tests.yml/badge.svg" alt="Build Status"></a>
@@ -7,16 +7,18 @@
 <a href="https://packagist.org/packages/ahs12/laravel-setanjo"><img src="https://img.shields.io/packagist/l/ahs12/laravel-setanjo" alt="License"></a>
 </p>
 
-A powerful Laravel package for managing application settings with multi-tenant support. Store global settings or tenant-specific configurations with automatic type casting, caching, and a clean API. Perfect for A/B testing, feature flags, and user preferences.
+A powerful Laravel package for managing application settings and configurations. Store global application settings or model-specific configurations (user preferences, company settings, etc.) with automatic type casting, caching, and a clean API. Perfect for feature flags, A/B testing, user preferences, and dynamic configuration management.
+
+**Note**: This package does **not** provide multi-tenancy features for your application. However, if your Laravel project already has multi-tenancy implemented, this package can store tenant-specific settings alongside your existing tenant architecture.
 
 ## Features
 
--   🏢 **Multi-Tenant Support**: Both strict and polymorphic tenancy modes
--   🗃️ **Polymorphic Storage**: Store settings for any model type
--   🏛️ **Global Settings**: Settings without any tenant scope
+-   🏢 **Multi-Tenant Ready**: Works with existing multi-tenant applications
+-   🗃️ **Model-Specific Settings**: Store settings for any Eloquent model (User, Company, etc.)
+-   🏛️ **Global Settings**: Application-wide settings without model scope
 -   ⚡ **Caching**: Optional caching with configurable cache store
--   🔒 **Validation**: Validate tenant models and prevent unauthorized access
--   📦 **Clean API**: Simple, intuitive API inspired by popular packages
+-   🔒 **Validation**: Validate models and prevent unauthorized access
+-   📦 **Clean API**: Simple, intuitive API for setting and retrieving values
 -   🧪 **Fully Tested**: Comprehensive test suite included
 -   ✅ **Type Safety**: Automatic type detection and conversion
 
