@@ -2,6 +2,19 @@
 
 All notable changes to `laravel-setanjo` will be documented in this file.
 
+## 1.0.0 - 2025-06-14
+
+### What's Changed
+
+* Update CHANGELOG for 0.0.3 by @github-actions in https://github.com/AHS12/laravel-setanjo/pull/6
+* Release Candidate for V1.0.0 by @AHS12 in https://github.com/AHS12/laravel-setanjo/pull/8
+
+### New Contributors
+
+* @github-actions made their first contribution in https://github.com/AHS12/laravel-setanjo/pull/6
+
+**Full Changelog**: https://github.com/AHS12/laravel-setanjo/compare/0.0.3...1.0.0
+
 ## 0.0.3 - 2025-06-12
 
 ### What's Changed
