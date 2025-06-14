@@ -1,12 +1,15 @@
 {
     "name": "ahs12/laravel-setanjo",
-    "description": "Multi-tenant Laravel settings package with polymorphic support",
+    "description": "Laravel settings package for managing application configurations, user preferences, feature flags, and A/B testing with multi-tenant support",
     "keywords": [
         "laravel",
         "settings",
+        "configuration",
+        "feature-flags",
+        "ab-testing",
+        "user-preferences",
         "multi-tenant",
-        "polymorphic",
-        "configuration"
+        "polymorphic"
     ],
     "homepage": "https://github.com/ahs12/laravel-setanjo",
     "license": "MIT",
