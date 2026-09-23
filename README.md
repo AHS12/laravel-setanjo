@@ -23,8 +23,21 @@ A powerful Laravel package for managing application settings and configurations.
 -   ✅ **Type Safety**: Automatic type detection and conversion
 
 ## Requirements
-- PHP 8.2 or higher
-- Laravel 10.0 or higher
+- PHP 8.4 or higher
+- Laravel 12.0 or 13.0
+
+### Version Compatibility
+
+| Package version | Laravel | PHP | Testbench | Status |
+| --- | --- | --- | --- | --- |
+| `2.x` | 12, 13 | `^8.4` | 10, 11 | Active |
+| `1.x` | 10, 11, 12 | `^8.2` | 8, 9, 10 | Maintenance / legacy |
+
+If you are on Laravel 10/11 or PHP 8.2/8.3, install the `1.x` line:
+
+```bash
+composer require "ahs12/laravel-setanjo:^1.0"
+```
 
 ## Installation
 
