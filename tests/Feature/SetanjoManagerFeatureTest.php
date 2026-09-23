@@ -5,6 +5,7 @@ namespace Ahs12\Setanjo\Tests\Feature;
 use Ahs12\Setanjo\Enums\SettingType;
 use Ahs12\Setanjo\Facades\Settings;
 use Ahs12\Setanjo\Models\Setting;
+use Ahs12\Setanjo\SetanjoManager;
 use Ahs12\Setanjo\Tests\Models\Company;
 use Ahs12\Setanjo\Tests\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -205,7 +206,7 @@ describe('Method Chaining', function () {
             ->set('timezone', 'America/New_York')
             ->set('currency', 'USD');
 
-        expect($result)->toBeInstanceOf(\Ahs12\Setanjo\SetanjoManager::class);
+        expect($result)->toBeInstanceOf(SetanjoManager::class);
         expect(Settings::for($company)->get('name'))->toBe('Acme Corp');
         expect(Settings::for($company)->get('timezone'))->toBe('America/New_York');
         expect(Settings::for($company)->get('currency'))->toBe('USD');

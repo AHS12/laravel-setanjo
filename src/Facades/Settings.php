@@ -2,6 +2,7 @@
 
 namespace Ahs12\Setanjo\Facades;
 
+use Ahs12\Setanjo\SetanjoManager;
 use Illuminate\Support\Facades\Facade;
 
 /**
@@ -14,7 +15,7 @@ use Illuminate\Support\Facades\Facade;
  * @method static \Illuminate\Support\Collection all()
  * @method static \Ahs12\Setanjo\SetanjoManager flush()
  *
- * @see \Ahs12\Setanjo\SetanjoManager
+ * @see SetanjoManager
  */
 class Settings extends Facade
 {

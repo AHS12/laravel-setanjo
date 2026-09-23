@@ -3,6 +3,7 @@
 namespace Ahs12\Setanjo\Models;
 
 use Ahs12\Setanjo\Enums\SettingType;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphTo;
 
@@ -13,8 +14,8 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * @property SettingType $type
  * @property string|null $tenantable_type
  * @property int|null $tenantable_id
- * @property \Carbon\Carbon $created_at
- * @property \Carbon\Carbon $updated_at
+ * @property Carbon $created_at
+ * @property Carbon $updated_at
  */
 class Setting extends Model
 {

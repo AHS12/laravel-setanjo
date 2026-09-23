@@ -3,6 +3,8 @@
 namespace Ahs12\Setanjo\Tests;
 
 use Ahs12\Setanjo\SetanjoServiceProvider;
+use Ahs12\Setanjo\Tests\Models\Company;
+use Ahs12\Setanjo\Tests\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
@@ -42,8 +44,8 @@ class TestCase extends Orchestra
         // Configure package for testing
         config()->set('setanjo.tenancy_mode', 'polymorphic');
         config()->set('setanjo.allowed_tenant_models', [
-            \Ahs12\Setanjo\Tests\Models\Company::class,
-            \Ahs12\Setanjo\Tests\Models\User::class,
+            Company::class,
+            User::class,
         ]);
         config()->set('setanjo.cache.enabled', false);
         config()->set('setanjo.table', 'settings');

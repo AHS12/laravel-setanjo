@@ -5,6 +5,7 @@ namespace Ahs12\Setanjo\Tests\Unit;
 use Ahs12\Setanjo\Enums\SettingType;
 use Ahs12\Setanjo\Models\Setting;
 use Ahs12\Setanjo\Tests\Models\Company;
+use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
 uses(RefreshDatabase::class);
@@ -49,7 +50,7 @@ describe('Setting Model', function () {
     it('has polymorphic tenantable relationship', function () {
         $setting = new Setting;
 
-        expect($setting->tenantable())->toBeInstanceOf(\Illuminate\Database\Eloquent\Relations\MorphTo::class);
+        expect($setting->tenantable())->toBeInstanceOf(MorphTo::class);
     });
 
     it('sets type from value automatically', function () {
