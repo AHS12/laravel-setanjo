@@ -10,7 +10,7 @@ use Ahs12\Setanjo\SetanjoManager;
  */
 class Drift
 {
-    public function __construct(protected SetanjoManager $manager) {}
+    public function __construct(protected SetanjoManager $manager, protected Catalog $catalog) {}
 
     /**
      * @return array<string, mixed>
@@ -56,6 +56,8 @@ class Drift
                 fn (string $key) => $definitions->get($key)?->isFeature() !== true,
             )),
             'flags_in_settings' => array_values(array_intersect($storedKeys, array_keys($definitions->features()))),
+            // Overrides of deleted records, and of model classes the dashboard does not know.
+            ...$this->catalog->orphans(),
         ];
     }
 }

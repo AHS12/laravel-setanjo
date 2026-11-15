@@ -19,8 +19,9 @@ class FeaturesController extends Controller
     public function update(Request $request, string $key): JsonResponse
     {
         $request->validate(['state' => 'present|nullable|boolean']);
-        $scope = $this->scopeFrom($request);
         $state = $request->input('state');
+        // Clearing (null) also works for a deleted record; setting a state needs a live one.
+        $scope = $this->scopeFrom($request, allowMissing: $state === null);
 
         $this->attempt(fn () => $this->setanjo->feature($key)->for($scope)->toggle($state === null ? null : (bool) $state));
 

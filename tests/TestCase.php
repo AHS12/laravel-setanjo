@@ -124,6 +124,17 @@ class TestCase extends Orchestra
             });
         }
 
+        if (! Schema::hasTable('branches')) {
+            Schema::create('branches', function (Blueprint $table) {
+                $table->uuid('id')->primary();
+                $table->string('title');
+                $table->string('code')->nullable();
+                $table->boolean('is_active')->default(true);
+                $table->timestamps();
+                $table->softDeletes();
+            });
+        }
+
         if (! Schema::hasTable('users')) {
             Schema::create('users', function (Blueprint $table) {
                 $table->id();

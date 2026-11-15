@@ -34,6 +34,7 @@ Route::prefix('api')->name('api.')->group(function () use ($key) {
     Route::get('scopes', [ScopesController::class, 'index'])->name('scopes.index');
     Route::get('scopes/{type}', [ScopesController::class, 'records'])->name('scopes.records');
     Route::get('scopes/{type}/{id}', [ScopesController::class, 'show'])->name('scopes.show');
+    Route::delete('scopes/{type}/{id}', [ScopesController::class, 'destroy'])->name('scopes.destroy');
 
     Route::get('drift', [DriftController::class, 'index'])->name('drift.index');
     Route::post('sync', [DriftController::class, 'sync'])->name('sync');

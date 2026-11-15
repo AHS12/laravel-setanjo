@@ -8,24 +8,30 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Guards the dashboard: viewing needs Setanjo::check(), any write needs Setanjo::canManage().
+ * Who may open the dashboard: Setanjo::auth() when set, else the local environment,
+ * else the `viewSetanjo` gate.
+ *
+ * It is listed in `setanjo.dashboard.middleware` (like Telescope's and Pulse's). Keep it to
+ * use the gate, or remove it and let your own middleware decide, e.g.
+ * ['web', 'auth', 'role:admin'].
  */
 class Authorize
 {
+    /** Request attribute set once this check has passed (read by GuardDashboard). */
+    public const PASSED = 'setanjo.authorized';
+
     public function handle(Request $request, Closure $next): Response
     {
         if (! Setanjo::check($request)) {
-            return $this->deny($request, __('setanjo::dashboard.forbidden'));
+            return static::deny($request, __('setanjo::dashboard.forbidden'));
         }
 
-        if (! $request->isMethodSafe() && ! Setanjo::canManage($request)) {
-            return $this->deny($request, __('setanjo::dashboard.readonly'));
-        }
+        $request->attributes->set(self::PASSED, true);
 
         return $next($request);
     }
 
-    protected function deny(Request $request, string $message): Response
+    public static function deny(Request $request, string $message): Response
     {
         if ($request->expectsJson()) {
             return response()->json(['message' => $message], Response::HTTP_FORBIDDEN);

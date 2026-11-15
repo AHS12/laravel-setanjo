@@ -7,6 +7,7 @@ use Ahs12\Setanjo\Models\Setting;
 use Ahs12\Setanjo\Models\SettingGroup;
 use Ahs12\Setanjo\Models\SettingHistory;
 use Ahs12\Setanjo\Setanjo;
+use Ahs12\Setanjo\Tests\Models\Branch;
 use Ahs12\Setanjo\Tests\Models\Company;
 use Ahs12\Setanjo\Tests\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -282,6 +283,141 @@ describe('Dashboard scopes API', function () {
 
         $features = collect($response->json('data.features'))->keyBy('key');
         expect($features['beta_feature'])->toMatchArray(['override' => false, 'effective' => false, 'source' => 'scope']);
+    });
+});
+
+describe('Dashboard scope edge cases', function () {
+    it('searches and labels models without a name column', function () {
+        config()->set('setanjo.scopes', [Branch::class => []]);
+        Branch::query()->create(['title' => 'Dhaka Main', 'code' => 'DHK']);
+        Branch::query()->create(['title' => 'Chattogram', 'code' => 'CTG']);
+
+        $this->getJson('/setanjo/api/scopes/branch?search=Dhaka')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.label', 'Dhaka Main');
+
+        $this->getJson('/setanjo/api/scopes/branch?search=CTG')
+            ->assertOk()
+            ->assertJsonPath('data.0.label', 'Chattogram');
+    });
+
+    it('finds UUID-keyed records by id and ignores malformed ids', function () {
+        config()->set('setanjo.scopes', [Branch::class => []]);
+        $branch = Branch::query()->create(['title' => 'Sylhet']);
+
+        $this->getJson('/setanjo/api/scopes/branch?search='.$branch->id)
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.id', $branch->id);
+
+        $this->getJson("/setanjo/api/scopes/branch/{$branch->id}")
+            ->assertOk()
+            ->assertJsonPath('data.scope.label', 'Sylhet');
+
+        $this->getJson('/setanjo/api/scopes/branch/not-a-uuid')->assertNotFound();
+        $this->getJson('/setanjo/api/scopes/company/abc')->assertNotFound();
+    });
+
+    it('opens soft-deleted records and says they are trashed', function () {
+        config()->set('setanjo.scopes', [Branch::class => []]);
+        $branch = Branch::query()->create(['title' => 'Closed branch']);
+        $branch->delete();
+
+        $this->getJson('/setanjo/api/scopes/branch?search=Closed')->assertJsonCount(0, 'data');
+        $this->getJson("/setanjo/api/scopes/branch/{$branch->id}")
+            ->assertOk()
+            ->assertJsonPath('data.scope.trashed', true)
+            ->assertJsonPath('data.scope.state', 'found');
+    });
+
+    it('explains records hidden by a global scope', function () {
+        config()->set('setanjo.scopes', [Branch::class => []]);
+        $branch = Branch::query()->create(['title' => 'Inactive', 'is_active' => false]);
+
+        $this->getJson("/setanjo/api/scopes/branch/{$branch->id}")
+            ->assertNotFound()
+            ->assertJson(['message' => __('setanjo::dashboard.scope_hidden', ['type' => 'Branch', 'id' => $branch->id])]);
+
+    });
+
+    it('shows records hidden by a global scope when the type sets without_scopes', function () {
+        config()->set('setanjo.scopes', [Branch::class => ['without_scopes' => true]]);
+        $branch = Branch::query()->create(['title' => 'Inactive', 'is_active' => false]);
+
+        $this->getJson("/setanjo/api/scopes/branch/{$branch->id}")
+            ->assertOk()
+            ->assertJsonPath('data.scope.label', 'Inactive');
+    });
+
+    it('lists, opens and clears overrides of deleted records', function () {
+        $acme = Company::query()->create(['name' => 'Acme']);
+        Settings::for($acme)->set('company_name', 'Acme Inc');
+        Settings::feature('tax_feature')->for($acme)->enable();
+        $id = $acme->id;
+        $acme->delete();
+
+        $this->getJson('/setanjo/api/scopes/company')
+            ->assertOk()
+            ->assertJsonPath('data.0.state', 'missing')
+            ->assertJsonPath('data.0.label', "Company #{$id}");
+
+        $show = $this->getJson("/setanjo/api/scopes/company/{$id}")->assertOk();
+        expect($show->json('data.scope.state'))->toBe('missing')
+            ->and(collect($show->json('data.settings'))->pluck('key')->all())->toBe(['company_name'])
+            ->and($show->json('data.settings.0'))->toMatchArray(['override' => 'Acme Inc', 'source' => 'missing'])
+            ->and(collect($show->json('data.features'))->pluck('key')->all())->toBe(['tax_feature']);
+
+        // New values need a live record; clearing does not.
+        $this->putJson('/setanjo/api/settings/company_name', ['value' => 'X', 'scope_type' => 'company', 'scope_id' => $id])->assertNotFound();
+        $this->putJson('/setanjo/api/features/tax_feature', ['state' => true, 'scope_type' => 'company', 'scope_id' => $id])->assertNotFound();
+        $this->deleteJson('/setanjo/api/settings/company_name', ['scope_type' => 'company', 'scope_id' => $id])->assertOk();
+
+        $this->deleteJson("/setanjo/api/scopes/company/{$id}")->assertOk();
+
+        expect(Settings::featureRepository()->overrideCounts())->toBe([])
+            ->and(Setting::query()->whereNotNull('tenantable_type')->count())->toBe(0);
+        $this->getJson("/setanjo/api/scopes/company/{$id}")->assertNotFound();
+    });
+
+    it('clears every override of a live record', function () {
+        $acme = Company::query()->create(['name' => 'Acme']);
+        Settings::for($acme)->set('company_name', 'Acme Inc');
+        Settings::feature('tax_feature')->for($acme)->enable();
+
+        $this->deleteJson("/setanjo/api/scopes/company/{$acme->id}")->assertOk();
+
+        expect(Settings::for($acme)->has('company_name'))->toBeFalse()
+            ->and(Settings::featureRepository()->overrides($acme))->toBe([]);
+    });
+
+    it('pages records with overrides in id order', function () {
+        $companies = collect(range(1, 3))->map(fn ($i) => Company::query()->create(['name' => "Company {$i}"]));
+        $companies->reverse()->each(fn (Company $company) => Settings::for($company)->set('company_name', $company->name));
+
+        $this->getJson('/setanjo/api/scopes/company?per_page=2')
+            ->assertOk()
+            ->assertJsonPath('meta.total', 3)
+            ->assertJsonPath('meta.last_page', 2)
+            ->assertJsonPath('data.*.label', ['Company 1', 'Company 2']);
+
+        $this->getJson('/setanjo/api/scopes/company?per_page=2&page=2')
+            ->assertJsonPath('data.*.label', ['Company 3']);
+    });
+
+    it('reports overrides of deleted records and unknown scope types in drift', function () {
+        $acme = Company::query()->create(['name' => 'Acme']);
+        $user = User::query()->create(['name' => 'Jane', 'email' => 'jane@example.com']);
+        Settings::for($acme)->set('company_name', 'Acme Inc');
+        Settings::for($user)->set('frequency', 'weekly');
+        $acme->delete();
+        config()->set('setanjo.scopes', [Company::class]);
+
+        $this->getJson('/setanjo/api/drift')
+            ->assertOk()
+            ->assertJsonPath('data.missing_records.0.label', "Company #{$acme->id}")
+            ->assertJsonPath('data.unknown_scope_types.0.class', User::class)
+            ->assertJsonPath('data.unknown_scope_types.0.settings', 1);
     });
 });
 

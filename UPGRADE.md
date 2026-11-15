@@ -7,7 +7,9 @@ environment only. To use it elsewhere, define a `viewSetanjo` gate (see the READ
 off, set `SETANJO_DASHBOARD_ENABLED=false`; no routes are registered then.
 
 If you published `config/setanjo.php`, add the `dashboard` and `scopes` keys from the package
-config to change the defaults.
+config to change the defaults. Keep `Authorize::class` in `dashboard.middleware` to use the
+`viewSetanjo` gate, or replace it with your own middleware (`['web', 'auth', 'role:admin']`).
+Read-only mode and the `manageSetanjo` gate apply either way.
 
 If the app already has a route at `/setanjo`, move the dashboard with `SETANJO_DASHBOARD_PATH`.
 

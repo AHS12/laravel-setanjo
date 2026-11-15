@@ -9,11 +9,13 @@ use Illuminate\Support\Facades\Gate;
 /**
  * Dashboard access control.
  *
- * Viewing: Setanjo::auth() callback when set; otherwise allowed in the local
- * environment, or when the app defines a `viewSetanjo` gate that passes.
+ * Viewing (the Authorize middleware, when it is in `setanjo.dashboard.middleware`):
+ * Setanjo::auth() callback when set; otherwise allowed in the local environment, or
+ * when the app defines a `viewSetanjo` gate that passes.
  *
- * Changing: never in readonly mode; otherwise Setanjo::manage() callback when set,
- * else the `manageSetanjo` gate when the app defines it, else whoever may view.
+ * Changing (always checked): never in readonly mode; otherwise Setanjo::manage()
+ * callback when set, else the `manageSetanjo` gate when the app defines it, else
+ * whoever may view.
  */
 class Setanjo
 {
@@ -54,7 +56,8 @@ class Setanjo
 
     public static function canManage(Request $request): bool
     {
-        if (config('setanjo.dashboard.readonly', false) || ! static::check($request)) {
+        // Viewing is already settled by the middleware stack (Authorize or the app's own).
+        if (config('setanjo.dashboard.readonly', false)) {
             return false;
         }
 

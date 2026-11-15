@@ -1,5 +1,7 @@
 <?php
 
+use Ahs12\Setanjo\Http\Middleware\Authorize;
+
 return [
     /*
     |--------------------------------------------------------------------------
@@ -187,18 +189,29 @@ return [
     |--------------------------------------------------------------------------
     |
     | A web UI for settings, groups, feature flags and overrides, mounted at
-    | {domain}/{path}. Access is allowed in the local environment; elsewhere
-    | define a `viewSetanjo` gate or call Setanjo::auth(). Writes also need
-    | the `manageSetanjo` gate when you define it.
+    | {domain}/{path}.
     |
-    | readonly: show everything, allow no changes
+    | middleware: every dashboard route (page and JSON API) runs through it.
+    |   Authorize allows the local environment, else the `viewSetanjo` gate or
+    |   Setanjo::auth(). Add your own middleware, or replace Authorize with it:
+    |     ['web', 'auth', Authorize::class]       your auth + the gate
+    |     ['web', 'auth', 'role:Super Admin']     your middleware decides
+    |
+    | require_auth: when Authorize is not in the list, outside the local
+    |   environment someone must be signed in, so ['web'] alone is never public.
+    |   Set false only if something else protects the path (VPN, proxy auth).
+    |
+    | readonly: show everything, allow no changes. Writes also need
+    |   Setanjo::manage() or the `manageSetanjo` gate when you define them;
+    |   both are always checked, whatever the middleware list.
     |
     */
     'dashboard' => [
         'enabled' => env('SETANJO_DASHBOARD_ENABLED', true),
         'path' => env('SETANJO_DASHBOARD_PATH', 'setanjo'),
         'domain' => env('SETANJO_DASHBOARD_DOMAIN'),
-        'middleware' => ['web'],
+        'middleware' => ['web', Authorize::class],
+        'require_auth' => env('SETANJO_DASHBOARD_REQUIRE_AUTH', true),
         'readonly' => env('SETANJO_DASHBOARD_READONLY', false),
     ],
 
@@ -208,7 +221,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | Models the dashboard can set overrides for, keyed by model class.
-    | Empty = the tenant models from tenancy_mode, labelled by `name`.
+    | Empty = the tenant models from tenancy_mode. Without `label`/`search`, the
+    | first of name, title, label, email, slug, code the table has is used.
     |
     |   App\Models\User::class => [
     |       'label' => 'name',                     // column or fn ($model) => ...
@@ -216,6 +230,7 @@ return [
     |       'description' => fn ($user) => $user->email,
     |       'without_scopes' => true,              // ignore global scopes (tenant, branch)
     |   ],
+    |   App\Models\Branch::class => ['without_scopes' => true],
     |
     */
     'scopes' => [

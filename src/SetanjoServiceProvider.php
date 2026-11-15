@@ -10,9 +10,11 @@ use Ahs12\Setanjo\Commands\MigrateFeatureFlagsCommand;
 use Ahs12\Setanjo\Commands\SyncCommand;
 use Ahs12\Setanjo\Contracts\FeatureRepositoryInterface;
 use Ahs12\Setanjo\Contracts\SettingsRepositoryInterface;
+use Ahs12\Setanjo\Dashboard\ScopeRegistry;
 use Ahs12\Setanjo\Definitions\DefinitionRegistry;
 use Ahs12\Setanjo\Http\Middleware\Authorize;
 use Ahs12\Setanjo\Http\Middleware\EnsureFeatureEnabled;
+use Ahs12\Setanjo\Http\Middleware\GuardDashboard;
 use Ahs12\Setanjo\Listeners\RecordSettingHistory;
 use Ahs12\Setanjo\Repositories\DatabaseFeatureRepository;
 use Ahs12\Setanjo\Repositories\DatabaseSettingsRepository;
@@ -79,6 +81,8 @@ class SetanjoServiceProvider extends PackageServiceProvider
         $this->app->singleton(DefinitionRegistry::class);
         $this->app->singleton(ScopeResolver::class);
         $this->app->singleton(SettingsCache::class);
+        // Scoped: the dashboard's controllers and Catalog share one registry (and its ghosts) per request.
+        $this->app->scoped(ScopeRegistry::class);
 
         $this->app->singleton(SettingsRepositoryInterface::class, function ($app) {
             $driver = config('setanjo.repository', 'database');
@@ -177,7 +181,8 @@ class SetanjoServiceProvider extends PackageServiceProvider
         Route::group([
             'domain' => config('setanjo.dashboard.domain'),
             'prefix' => trim((string) config('setanjo.dashboard.path', 'setanjo'), '/'),
-            'middleware' => [...(array) config('setanjo.dashboard.middleware', ['web']), Authorize::class],
+            // The app's stack (Authorize included by default), then the guard that cannot be configured away.
+            'middleware' => [...(array) config('setanjo.dashboard.middleware', ['web', Authorize::class]), GuardDashboard::class],
             'as' => 'setanjo.',
         ], function () {
             $this->loadRoutesFrom(__DIR__.'/../routes/dashboard.php');

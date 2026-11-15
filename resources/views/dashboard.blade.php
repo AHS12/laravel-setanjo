@@ -239,9 +239,9 @@
                             </div>
                             <div>
                                 <label class="s-label" for="scope-search">Find a record</label>
-                                <input id="scope-search" type="search" class="s-input" placeholder="Name, email or id" x-model="search" @input="searchLater()">
+                                <input id="scope-search" type="search" class="s-input" placeholder="Search, or paste an id" x-model="search" @input="searchLater()">
                             </div>
-                            <p class="text-xs text-zinc-500" x-text="overriddenList ? 'Records with overrides' : 'Search results'"></p>
+                            <p class="text-xs text-zinc-500" x-text="overriddenList ? 'Records with overrides' + (meta ? ' (' + meta.total + ')' : '') : 'Search results'"></p>
                             <p class="text-sm text-zinc-500" x-show="loadingRecords">Loading…</p>
                             <p class="text-sm text-zinc-500" x-show="!loadingRecords && records.length === 0" x-text="overriddenList ? 'No overrides yet. Search for a record to add one.' : 'No matches.'"></p>
                             <ul class="-mx-1 max-h-[60vh] space-y-0.5 overflow-y-auto">
@@ -249,16 +249,24 @@
                                     <li>
                                         <button type="button" class="w-full rounded-lg px-2 py-1.5 text-left text-sm hover:bg-zinc-100 dark:hover:bg-zinc-800"
                                                 :class="{ 'bg-indigo-50 dark:bg-indigo-950': selected && selected.id === record.id && selected.type === record.type }" @click="select(record)">
-                                            <span class="block font-medium" x-text="record.label"></span>
-                                            <span class="block text-xs text-zinc-500">
+                                            <span class="flex flex-wrap items-center gap-1.5">
+                                                <span class="font-medium" x-text="record.label"></span>
+                                                <span class="s-badge bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" x-show="stateText(record)" x-text="stateText(record)"></span>
+                                            </span>
+                                            <span class="block break-all text-xs text-zinc-500">
                                                 <span x-text="'#' + record.id"></span>
                                                 <span x-show="record.description" x-text="'· ' + record.description"></span>
-                                                <span x-show="record.settings || record.features" x-text="'· ' + ((record.settings || 0) + (record.features || 0)) + ' overrides'"></span>
+                                                <span x-show="record.settings || record.features" x-text="'· ' + plural((record.settings || 0) + (record.features || 0), 'override')"></span>
                                             </span>
                                         </button>
                                     </li>
                                 </template>
                             </ul>
+                            <div class="flex items-center justify-between gap-2 text-xs text-zinc-500" x-show="overriddenList && meta && meta.last_page > 1">
+                                <button type="button" class="s-btn px-2 py-1 text-xs" :disabled="loadingRecords || page <= 1" @click="goTo(page - 1)">Previous</button>
+                                <span x-text="'Page ' + page + ' of ' + (meta ? meta.last_page : 1)"></span>
+                                <button type="button" class="s-btn px-2 py-1 text-xs" :disabled="loadingRecords || !meta || page >= meta.last_page" @click="goTo(page + 1)">Next</button>
+                            </div>
                         </div>
                     </template>
                 </div>
@@ -273,11 +281,19 @@
                         <div class="space-y-4">
                             <div class="flex flex-wrap items-center gap-3">
                                 <h2 class="text-lg font-semibold" x-text="scope.scope.label"></h2>
-                                <span class="s-badge" x-text="scope.scope.type + ' #' + scope.scope.id"></span>
+                                <span class="s-badge break-all" x-text="scope.scope.type + ' #' + scope.scope.id"></span>
+                                <span class="s-badge bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300" x-show="stateText(scope.scope)" x-text="stateText(scope.scope)"></span>
                                 <div class="ml-auto flex flex-wrap items-center gap-3">
+                                    <button type="button" class="s-btn-danger" x-show="$store.s.canManage && overrideCount > 0" :disabled="clearing" @click="clearAll()">Clear all overrides</button>
                                     <input type="search" class="s-input w-48" placeholder="Filter" x-model.debounce.150ms="filter">
                                     <label class="flex items-center gap-1.5 text-sm"><input type="checkbox" x-model="onlyOverridden"> Only overridden</label>
                                 </div>
+                            </div>
+                            <div x-show="scope.scope.state === 'missing'" class="rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
+                                This record no longer exists. Only the overrides still stored for it are listed, and they can only be cleared.
+                            </div>
+                            <div x-show="scope.scope.trashed" class="rounded-lg border border-zinc-300 bg-zinc-50 px-4 py-3 text-sm text-zinc-700 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-300">
+                                This record is soft-deleted. Its overrides still apply if it is restored.
                             </div>
                             <div class="flex gap-1">
                                 <button type="button" class="s-tab" :class="{ 's-tab-active': tab === 'features' }" @click="tab = 'features'" x-text="'Feature flags (' + scope.features.length + ')'"></button>
@@ -301,8 +317,8 @@
                                         </div>
                                         <div class="inline-flex overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700" role="group">
                                             <button type="button" class="s-seg" :disabled="!$store.s.canManage || !row.allowed || busy === row.key" :class="{ 'bg-zinc-900 text-white hover:bg-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-100': row.override === null }" @click="setFlag(row, null)">Inherit</button>
-                                            <button type="button" class="s-seg border-l border-zinc-300 dark:border-zinc-700" :disabled="!$store.s.canManage || !row.allowed || busy === row.key" :class="{ 'bg-emerald-600 text-white hover:bg-emerald-600': row.override === true }" @click="setFlag(row, true)">On</button>
-                                            <button type="button" class="s-seg border-l border-zinc-300 dark:border-zinc-700" :disabled="!$store.s.canManage || !row.allowed || busy === row.key" :class="{ 'bg-red-600 text-white hover:bg-red-600': row.override === false }" @click="setFlag(row, false)">Off</button>
+                                            <button type="button" class="s-seg border-l border-zinc-300 dark:border-zinc-700" :disabled="!$store.s.canManage || !row.allowed || busy === row.key || row.missing" :class="{ 'bg-emerald-600 text-white hover:bg-emerald-600': row.override === true }" @click="setFlag(row, true)">On</button>
+                                            <button type="button" class="s-seg border-l border-zinc-300 dark:border-zinc-700" :disabled="!$store.s.canManage || !row.allowed || busy === row.key || row.missing" :class="{ 'bg-red-600 text-white hover:bg-red-600': row.override === false }" @click="setFlag(row, false)">Off</button>
                                         </div>
                                     </div>
                                 </template>
@@ -455,6 +471,8 @@
                                 { key: 'stale', title: 'Stale settings', help: 'Stored without a definition. “Prune” deletes them in every scope.', list: report.stale },
                                 { key: 'stale_features', title: 'Stale flags', help: 'Flag rows without a feature definition. “Prune” deletes them.', list: report.stale_features },
                                 { key: 'flags_in_settings', title: 'Flags still in settings', help: 'Run php artisan setanjo:migrate-feature-flags to move them.', list: report.flags_in_settings },
+                                { key: 'missing_records', title: 'Overrides of deleted records', help: 'The record is gone but its overrides are stored. Open it on the Overrides screen to clear them.', list: report.missing_records.map(i => i.label + ': ' + (i.settings + i.features) + ((i.settings + i.features) === 1 ? ' override' : ' overrides')) },
+                                { key: 'unknown_scope_types', title: 'Unknown scope types', help: 'Overrides stored for models not in setanjo.scopes (or the tenancy config). Add the model to see them here.', list: report.unknown_scope_types.map(i => i.class + ': ' + i.records + ' records') },
                             ]" :key="item.key">
                                 <div class="s-card p-4">
                                     <div class="flex items-center gap-2">
@@ -642,6 +660,30 @@
                 </div>
             </template>
         </aside>
+    </div>
+
+    <!-- ================================================================ Confirm dialog -->
+    <div x-show="$store.s.dialog.open" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4"
+         @keydown.escape.window="$store.s.dialog.open && $store.s.closeDialog(false)"
+         x-effect="$store.s.dialog.open && setTimeout(() => $refs.dialogCancel.focus(), 20)">
+        <div class="absolute inset-0 bg-zinc-950/50" @click="$store.s.closeDialog(false)"></div>
+        <div class="relative w-full max-w-md rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-800 dark:bg-zinc-900"
+             role="alertdialog" aria-modal="true" aria-labelledby="dialog-title" aria-describedby="dialog-message">
+            <div class="flex gap-3">
+                <div class="flex size-9 shrink-0 items-center justify-center rounded-full"
+                     :class="$store.s.dialog.danger ? 'bg-red-100 text-red-600 dark:bg-red-950 dark:text-red-400' : 'bg-indigo-100 text-indigo-600 dark:bg-indigo-950 dark:text-indigo-400'">
+                    <svg class="size-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/></svg>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <h2 id="dialog-title" class="font-semibold" x-text="$store.s.dialog.title"></h2>
+                    <p id="dialog-message" class="mt-1 text-sm text-zinc-600 dark:text-zinc-400" x-show="$store.s.dialog.message" x-text="$store.s.dialog.message"></p>
+                </div>
+            </div>
+            <div class="mt-5 flex justify-end gap-2">
+                <button type="button" class="s-btn" x-ref="dialogCancel" @click="$store.s.closeDialog(false)">Cancel</button>
+                <button type="button" :class="$store.s.dialog.danger ? 's-btn-danger-solid' : 's-btn-primary'" @click="$store.s.closeDialog(true)" x-text="$store.s.dialog.confirmLabel"></button>
+            </div>
+        </div>
     </div>
 
     <!-- ================================================================ Toasts -->

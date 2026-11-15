@@ -22,8 +22,11 @@ abstract class Controller
 
     /**
      * The scope named by `scope_type` (alias) + `scope_id`, or null for global.
+     *
+     * With $allowMissing, a deleted record that still has overrides comes back as a ghost
+     * so those overrides can be cleared. Writing new values to it is never allowed.
      */
-    protected function scopeFrom(Request $request): ?Model
+    protected function scopeFrom(Request $request, bool $allowMissing = false): ?Model
     {
         $request->validate([
             'scope_type' => 'nullable|string',
@@ -32,7 +35,33 @@ abstract class Controller
 
         $type = $request->input('scope_type');
 
-        return $type === null ? null : $this->scopes->find($type, $request->input('scope_id'));
+        if ($type === null) {
+            return null;
+        }
+
+        return $allowMissing
+            ? $this->scopeOrGhost($type, (string) $request->input('scope_id'))
+            : $this->scopes->find($type, (string) $request->input('scope_id'));
+    }
+
+    /**
+     * The record, or a ghost of it when it was deleted but overrides are still stored.
+     */
+    protected function scopeOrGhost(string $type, string $id): Model
+    {
+        $model = $this->scopes->findOrNull($type, $id);
+
+        if ($model !== null) {
+            return $model;
+        }
+
+        if ($this->scopes->acceptsKey($type, $id)
+            && $this->scopes->state($type, $id) === ScopeRegistry::MISSING
+            && $this->catalog->hasOverrides($this->scopes->type($type)['class'], $id)) {
+            return $this->scopes->ghost($type, $id);
+        }
+
+        return $this->scopes->find($type, $id); // throws the right 404
     }
 
     /**

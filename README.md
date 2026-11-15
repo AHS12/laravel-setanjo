@@ -414,24 +414,56 @@ the dashboard. Values with meta `sensitive => true` are never sent to the browse
 
 ### Access
 
-The dashboard is open in the `local` environment only. Everywhere else, define a gate:
+Every dashboard route (the page and its JSON API) runs through `setanjo.dashboard.middleware`,
+the same way Telescope and Pulse work:
+
+```php
+use Ahs12\Setanjo\Http\Middleware\Authorize;
+
+'middleware' => ['web', Authorize::class],
+```
+
+**`Authorize`** (the default) lets the dashboard open in the `local` environment only. Elsewhere,
+define a gate:
 
 ```php
 // AppServiceProvider::boot()
 Gate::define('viewSetanjo', fn (User $user) => $user->isAdmin());
-
-// optional: who may change things (default: whoever may view)
-Gate::define('manageSetanjo', fn (User $user) => $user->isSuperAdmin());
 ```
 
-Or take full control with callbacks, which win over the gates and the environment:
+or take full control with a callback, which wins over the gate and the environment:
 
 ```php
 use Ahs12\Setanjo\Setanjo;
 
 Setanjo::auth(fn (Request $request) => $request->user()?->isAdmin() ?? false);
+```
+
+**Your own middleware.** Add middleware to the list, or replace `Authorize` with it:
+
+```php
+'middleware' => ['web', 'auth', Authorize::class],        // your login + the viewSetanjo gate
+'middleware' => ['web', 'auth', 'role:Super Admin'],      // your middleware alone decides
+'middleware' => ['web', 'auth.basic', 'can:manage-settings'],
+```
+
+**Never public by accident.** Without `Authorize` in the list, outside the `local` environment
+someone must be signed in, so `['web']` alone answers 403. Set `require_auth` to `false` only when
+something else protects the path (a VPN, an IP allow-list or auth at the proxy).
+
+**Changes** are always checked, whatever the list: nothing in `readonly` mode, otherwise
+`Setanjo::manage()` when set, else the `manageSetanjo` gate when defined, else whoever may view.
+
+```php
+Gate::define('manageSetanjo', fn (User $user) => $user->isSuperAdmin());
+// or
 Setanjo::manage(fn (Request $request) => $request->user()?->isSuperAdmin() ?? false);
 ```
+
+**Token-only APIs (Sanctum bearer tokens).** A browser opening `/setanjo` does not send the API
+token, so `auth:sanctum` cannot protect the page. Use a browser-friendly login instead, for
+example `['web', 'auth.basic:web', 'role:Super Admin,web']` (HTTP Basic against the `web` guard),
+a session login page, or a middleware of your own such as an IP allow-list.
 
 ### Configuration
 
@@ -440,7 +472,8 @@ Setanjo::manage(fn (Request $request) => $request->user()?->isSuperAdmin() ?? fa
     'enabled' => env('SETANJO_DASHBOARD_ENABLED', true),   // false: no routes at all
     'path' => env('SETANJO_DASHBOARD_PATH', 'setanjo'),
     'domain' => env('SETANJO_DASHBOARD_DOMAIN'),
-    'middleware' => ['web'],                                 // add 'auth' etc. here
+    'middleware' => ['web', Authorize::class],               // see Access
+    'require_auth' => env('SETANJO_DASHBOARD_REQUIRE_AUTH', true),
     'readonly' => env('SETANJO_DASHBOARD_READONLY', false),  // view only, for everyone
 ],
 
@@ -452,9 +485,27 @@ Setanjo::manage(fn (Request $request) => $request->user()?->isSuperAdmin() ?? fa
         'description' => fn ($user) => $user->email,
         'without_scopes' => true,                       // ignore global scopes (tenant, branch)
     ],
-    App\Models\Branch::class => ['search' => ['name']],
+    App\Models\Branch::class => ['search' => ['title', 'code']],
 ],
 ```
+
+Any model can be a scope, not just users. On the Overrides screen you pick the type (User,
+Company, Branch…), find a record and set overrides for it; inherited values show where they
+come from. Things to know:
+
+- **Label and search columns.** Without `label`/`search`, the first of `name`, `title`, `label`,
+  `email`, `slug`, `code` the table has is used, and records without one show as `Branch #12`.
+  Pasting an id always works: digits for integer keys, a valid UUID/ULID for `HasUuids`/`HasUlids`.
+- **Global scopes.** The dashboard queries models with their global scopes applied. If a tenant or
+  branch scope (one that reads the logged-in user) would hide records from the admin using the
+  dashboard, set `'without_scopes' => true` for that type. Opening a hidden record says so.
+- **Soft deletes.** Soft-deleted records still open (marked *trashed*); their overrides apply
+  again if they are restored. They are left out of search.
+- **Deleted records.** Overrides of a record that was deleted are listed as *deleted*. Opening it
+  shows only what is stored, which can be cleared one by one or with **Clear all overrides**. The
+  Drift screen lists them, and overrides stored for models the dashboard does not know.
+- **UUID/ULID scope models** need `Schema::morphUsingUuids()` (or `morphUsingUlids()`) before the
+  setanjo migrations run, like any polymorphic relation, so the scope id columns can hold them.
 
 The page uses the app's CSP nonce when one is set with `Vite::useCspNonce()`. Alpine.js needs
 `'unsafe-eval'` in `script-src`.

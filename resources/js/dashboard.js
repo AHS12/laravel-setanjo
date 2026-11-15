@@ -171,6 +171,24 @@ document.addEventListener('alpine:init', () => {
         groups: [],
         toasts: [],
         meta: { open: false },
+        dialog: { open: false },
+
+        /**
+         * In-page confirmation (instead of window.confirm). Resolves true on confirm,
+         * false on cancel, Escape or a click outside.
+         */
+        confirm({ title, message = '', confirmLabel = 'Confirm', danger = false }) {
+            this.dialog.resolve?.(false);
+            return new Promise((resolve) => {
+                this.dialog = { open: true, title, message, confirmLabel, danger, resolve };
+            });
+        },
+
+        closeDialog(result) {
+            const resolve = this.dialog.resolve;
+            this.dialog = { open: false };
+            resolve?.(result);
+        },
 
         get canManage() {
             return config.canManage;
@@ -280,7 +298,8 @@ document.addEventListener('alpine:init', () => {
         },
 
         get disabled() {
-            return !config.canManage || this.row.readonly || this.row.allowed === false || this.saving;
+            // Rows of a deleted record (missing) can only be cleared, not edited.
+            return !config.canManage || this.row.readonly || this.row.allowed === false || this.row.missing === true || this.saving;
         },
 
         reset(value) {
@@ -311,10 +330,11 @@ document.addEventListener('alpine:init', () => {
         async clear() {
             this.error = null;
             this.saving = true;
+            const label = this.row.label; // the row may leave the list (deleted record's last override)
             try {
                 const updated = await remove();
                 this.reset(updated?.[field]);
-                this.$store.s.toast(`Reset ${this.row.label}`);
+                this.$store.s.toast(`Reset ${label}`);
             } catch (error) {
                 this.error = error.message;
             } finally {
@@ -543,7 +563,10 @@ document.addEventListener('alpine:init', () => {
         search: '',
         records: [],
         overriddenList: true,
+        page: 1,
+        meta: null,
         loadingRecords: false,
+        clearing: false,
         selected: null,
         scope: null,
         loading: false,
@@ -561,9 +584,12 @@ document.addEventListener('alpine:init', () => {
         async loadRecords() {
             this.loadingRecords = true;
             try {
-                const response = await api('GET', `/scopes/${this.type}${query({ search: this.search })}`);
+                const params = this.search ? { search: this.search } : { page: this.page };
+                const response = await api('GET', `/scopes/${this.type}${query(params)}`);
                 this.records = response.data;
                 this.overriddenList = response.overridden;
+                this.meta = response.meta ?? null;
+                if (this.meta) this.page = this.meta.page;
             } catch (error) {
                 this.$store.s.fail(error);
             } finally {
@@ -578,9 +604,58 @@ document.addEventListener('alpine:init', () => {
 
         changeType() {
             this.search = '';
+            this.page = 1;
             this.selected = null;
             this.scope = null;
             this.loadRecords();
+        },
+
+        goTo(page) {
+            this.page = page;
+            this.loadRecords();
+        },
+
+        plural(count, word) {
+            return `${count} ${count === 1 ? word : word + 's'}`;
+        },
+
+        stateText(record) {
+            if (record.state === 'missing') return 'deleted';
+            if (record.state === 'hidden') return 'hidden by a global scope';
+            return record.trashed ? 'trashed' : '';
+        },
+
+        get overrideCount() {
+            if (!this.scope) return 0;
+            return this.scope.settings.filter((row) => row.overridden).length + this.scope.features.filter((row) => row.override !== null).length;
+        },
+
+        async clearAll() {
+            const label = this.scope.scope.label;
+            const count = this.overrideCount;
+            const confirmed = await this.$store.s.confirm({
+                title: `Clear all overrides of ${label}?`,
+                message: `${count} ${count === 1 ? 'override' : 'overrides'} will be removed. ${label} falls back to inherited values.`,
+                confirmLabel: 'Clear overrides',
+                danger: true,
+            });
+            if (!confirmed) return;
+            this.clearing = true;
+            try {
+                const { data } = await api('DELETE', `/scopes/${this.selected.type}/${encodeURIComponent(this.selected.id)}`);
+                this.$store.s.toast(`Cleared overrides of ${label}`);
+                if (data.scope.state === 'missing') {
+                    this.selected = null;
+                    this.scope = null;
+                } else {
+                    this.scope = data;
+                }
+                await this.loadRecords();
+            } catch (error) {
+                this.$store.s.fail(error);
+            } finally {
+                this.clearing = false;
+            }
         },
 
         async select(record) {
@@ -616,16 +691,19 @@ document.addEventListener('alpine:init', () => {
             return { scope_type: this.selected.type, scope_id: this.selected.id };
         },
 
-        replace(list, updated) {
-            this.scope[list] = this.scope[list].map((row) => (row.key === updated.key ? updated : row));
+        // A deleted record lists only stored overrides, so a cleared one comes back null: drop it.
+        replace(list, updated, key) {
+            this.scope[list] = updated
+                ? this.scope[list].map((row) => (row.key === updated.key ? updated : row))
+                : this.scope[list].filter((row) => row.key !== key);
         },
 
         async setFlag(row, state) {
-            if (!config.canManage || !row.allowed || row.override === state) return;
+            if (!config.canManage || !row.allowed || row.override === state || (row.missing && state !== null)) return;
             this.busy = row.key;
             try {
                 const { data } = await api('PUT', `/features/${encodeURIComponent(row.key)}`, { state, ...this.params() });
-                this.replace('features', data);
+                this.replace('features', data, row.key);
             } catch (error) {
                 this.$store.s.fail(error);
             } finally {
@@ -636,7 +714,7 @@ document.addEventListener('alpine:init', () => {
         save(row) {
             return async (value) => {
                 const { data } = await api('PUT', `/settings/${encodeURIComponent(row.key)}`, { value, ...this.params() });
-                this.replace('settings', data);
+                this.replace('settings', data, row.key);
                 return data;
             };
         },
@@ -644,7 +722,7 @@ document.addEventListener('alpine:init', () => {
         remove(row) {
             return async () => {
                 const { data } = await api('DELETE', `/settings/${encodeURIComponent(row.key)}`, this.params());
-                this.replace('settings', data);
+                this.replace('settings', data, row.key);
                 return data;
             };
         },
@@ -655,6 +733,7 @@ document.addEventListener('alpine:init', () => {
                     row.source_scope && this.selected && row.source_scope.type === this.selected.type && String(row.source_scope.id) === String(this.selected.id);
                 return same ? 'this record' : row.source_scope?.label ?? 'scope';
             }
+            if (row.source === 'missing') return 'nowhere (record deleted)';
             return row.source;
         },
     }));
@@ -724,7 +803,13 @@ document.addEventListener('alpine:init', () => {
         },
 
         async deleteGroup(group) {
-            if (!confirm(`Delete the group "${group.name}"? Its settings and flags become ungrouped.`)) return;
+            const confirmed = await this.$store.s.confirm({
+                title: `Delete the group “${group.name}”?`,
+                message: 'Its settings and flags become ungrouped. The settings themselves are kept.',
+                confirmLabel: 'Delete group',
+                danger: true,
+            });
+            if (!confirmed) return;
             try {
                 await api('DELETE', `/groups/${group.id}`);
                 await this.$store.s.loadGroups();
@@ -763,7 +848,7 @@ document.addEventListener('alpine:init', () => {
             const r = this.report;
             return (
                 r &&
-                ['missing', 'missing_features', 'type_mismatch', 'stale', 'stale_features', 'flags_in_settings'].every(
+                ['missing', 'missing_features', 'type_mismatch', 'stale', 'stale_features', 'flags_in_settings', 'missing_records', 'unknown_scope_types'].every(
                     (key) => r[key].length === 0,
                 )
             );

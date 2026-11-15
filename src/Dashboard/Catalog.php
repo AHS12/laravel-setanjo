@@ -12,6 +12,7 @@ use Ahs12\Setanjo\Models\SettingGroup;
 use Ahs12\Setanjo\SetanjoManager;
 use Ahs12\Setanjo\ValueObjects\ResolvedValue;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -101,37 +102,49 @@ class Catalog
     /**
      * Every setting and flag as seen by one scope: its own override and the effective value.
      *
+     * For a record that no longer exists (a ScopeRegistry ghost), only its stored overrides are listed and
+     * nothing is resolved, so they can be reviewed and cleared.
+     *
      * @return array{scope: array<string, mixed>, settings: array<int, array<string, mixed>>, features: array<int, array<string, mixed>>}
      */
     public function forScope(Model $scope): array
     {
+        $missing = $this->scopes->isGhost($scope);
         $repository = $this->manager->repository();
-        $features = $this->manager->featureRepository();
-        $overrides = $features->overrides($scope);
+        $overrides = $this->manager->featureRepository()->overrides($scope);
+        $settings = [];
+        $flags = [];
 
-        $settings = array_map(function (array $row) use ($scope, $repository) {
+        foreach ($this->settings() as $row) {
             $stored = $repository->record($row['key'], $scope);
-            $resolved = $this->manager->resolve($row['key'], $scope);
 
-            return [
+            if ($missing && $stored === null) {
+                continue;
+            }
+
+            $settings[] = [
                 ...$this->slim($row),
                 'allowed' => $this->allows($row['key'], $scope),
                 'overridden' => $stored !== null,
                 'override' => $stored === null ? null : $this->mask($row, $stored['value']),
-                ...$this->effective($row, $resolved),
+                ...($missing ? $this->unresolved() : $this->effective($row, $this->manager->resolve($row['key'], $scope))),
             ];
-        }, $this->settings());
+        }
 
-        $flags = array_map(function (array $row) use ($scope, $overrides) {
-            $resolved = $this->manager->resolveFeature($row['key'], $scope);
+        foreach ($this->features() as $row) {
+            $override = $overrides[$row['key']] ?? null;
 
-            return [
+            if ($missing && $override === null) {
+                continue;
+            }
+
+            $flags[] = [
                 ...$this->slim($row),
                 'allowed' => $this->allows($row['key'], $scope),
-                'override' => $overrides[$row['key']] ?? null,
-                ...$this->effective($row, $resolved),
+                'override' => $override,
+                ...($missing ? $this->unresolved() : $this->effective($row, $this->manager->resolveFeature($row['key'], $scope))),
             ];
-        }, $this->features());
+        }
 
         return [
             'scope' => $this->scopes->present($scope),
@@ -141,30 +154,33 @@ class Catalog
     }
 
     /**
-     * Records of a scope type that have at least one setting or flag override.
-     *
-     * @return array<int, array<string, mixed>>
+     * Whether anything is stored for this scope (settings or flag overrides).
      */
-    public function overriddenRecords(string $alias, int $limit = 50): array
+    public function hasOverrides(string $class, int|string $id): bool
     {
-        $class = $this->scopes->type($alias)['class'];
         $column = config('setanjo.tenantable_column', 'tenantable');
 
-        // The tenant column name is configurable, so query it on the base builder.
-        $settings = Setting::query()->toBase()
-            ->where($column.'_type', $class)
-            ->groupBy($column.'_id')
-            ->selectRaw("{$column}_id as scope_id, COUNT(*) as aggregate")
-            ->pluck('aggregate', 'scope_id');
+        return Setting::query()->toBase()->where($column.'_type', $class)->where($column.'_id', $id)->exists()
+            || FeatureOverride::query()->where('scope_type', $class)->where('scope_id', $id)->exists();
+    }
 
-        $flags = FeatureOverride::query()
-            ->where('scope_type', $class)
-            ->groupBy('scope_id')
-            ->selectRaw('scope_id, COUNT(*) as aggregate')
-            ->pluck('aggregate', 'scope_id');
+    /**
+     * Records of a scope type that have at least one setting or flag override, by id, one page at a time.
+     *
+     * @return array{data: array<int, array<string, mixed>>, page: int, per_page: int, total: int, last_page: int}
+     */
+    public function overriddenRecords(string $alias, int $page = 1, int $perPage = 50): array
+    {
+        $class = $this->scopes->type($alias)['class'];
+        [$settings, $flags] = $this->overrideCountsFor($class);
+
+        $ids = $this->idsOf($settings, $flags);
+        $total = $ids->count();
+        $lastPage = max(1, (int) ceil($total / $perPage));
+        $page = min(max(1, $page), $lastPage);
 
         $records = [];
-        foreach ($settings->keys()->merge($flags->keys())->unique()->take($limit) as $id) {
+        foreach ($ids->forPage($page, $perPage) as $id) {
             $records[] = [
                 ...(array) $this->scopes->reference($class, $id),
                 'settings' => (int) ($settings[$id] ?? 0),
@@ -172,7 +188,48 @@ class Catalog
             ];
         }
 
-        return $records;
+        return ['data' => $records, 'page' => $page, 'per_page' => $perPage, 'total' => $total, 'last_page' => $lastPage];
+    }
+
+    /**
+     * Overrides stored for records that no longer exist, and for model classes the dashboard
+     * does not know (not in `setanjo.scopes` or the tenancy config).
+     *
+     * @return array{missing_records: array<int, array<string, mixed>>, unknown_scope_types: array<int, array<string, mixed>>}
+     */
+    public function orphans(): array
+    {
+        $column = config('setanjo.tenantable_column', 'tenantable');
+        $classes = Setting::query()->toBase()->whereNotNull($column.'_type')->distinct()->pluck($column.'_type')
+            ->merge(FeatureOverride::query()->distinct()->pluck('scope_type'))
+            ->unique()
+            ->sort()
+            ->values();
+
+        $missing = [];
+        $unknown = [];
+
+        foreach ($classes as $class) {
+            [$settings, $flags] = $this->overrideCountsFor($class);
+            $ids = $this->idsOf($settings, $flags);
+            $alias = $this->scopes->aliasOf($class);
+
+            if ($alias === null) {
+                $unknown[] = ['class' => $class, 'records' => $ids->count(), 'settings' => (int) $settings->sum(), 'features' => (int) $flags->sum()];
+
+                continue;
+            }
+
+            foreach ($this->scopes->missingIds($alias, $ids->all()) as $id) {
+                $missing[] = [
+                    ...(array) $this->scopes->reference($class, $id),
+                    'settings' => (int) ($settings[$id] ?? 0),
+                    'features' => (int) ($flags[$id] ?? 0),
+                ];
+            }
+        }
+
+        return ['missing_records' => $missing, 'unknown_scope_types' => $unknown];
     }
 
     /**
@@ -265,6 +322,56 @@ class Catalog
             'override_count' => $overrides,
             'scopes' => $this->scopeAliases($definition),
         ];
+    }
+
+    /**
+     * Setting and flag override counts per record id of one scope class.
+     *
+     * @return array{0: Collection<int|string, int>, 1: Collection<int|string, int>}
+     */
+    protected function overrideCountsFor(string $class): array
+    {
+        $column = config('setanjo.tenantable_column', 'tenantable');
+
+        // The tenant column name is configurable, so query it on the base builder.
+        $settings = Setting::query()->toBase()
+            ->where($column.'_type', $class)
+            ->groupBy($column.'_id')
+            ->selectRaw("{$column}_id as scope_id, COUNT(*) as aggregate")
+            ->pluck('aggregate', 'scope_id')
+            ->map(fn ($count) => (int) $count);
+
+        $flags = FeatureOverride::query()
+            ->where('scope_type', $class)
+            ->groupBy('scope_id')
+            ->selectRaw('scope_id, COUNT(*) as aggregate')
+            ->pluck('aggregate', 'scope_id')
+            ->map(fn ($count) => (int) $count);
+
+        return [$settings, $flags];
+    }
+
+    /**
+     * Distinct record ids across both count maps, in natural order (1, 2, 10; UUIDs alphabetically).
+     *
+     * @param  Collection<int|string, int>  $settings
+     * @param  Collection<int|string, int>  $flags
+     * @return Collection<int, int|string>
+     */
+    protected function idsOf(Collection $settings, Collection $flags): Collection
+    {
+        return $settings->keys()->merge($flags->keys())
+            ->unique(fn ($id) => (string) $id)
+            ->sort(fn ($a, $b) => strnatcmp((string) $a, (string) $b))
+            ->values();
+    }
+
+    /**
+     * @return array{effective: null, source: string, source_scope: null, missing: true}
+     */
+    protected function unresolved(): array
+    {
+        return ['effective' => null, 'source' => 'missing', 'source_scope' => null, 'missing' => true];
     }
 
     /**

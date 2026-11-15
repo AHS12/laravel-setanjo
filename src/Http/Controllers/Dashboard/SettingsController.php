@@ -34,7 +34,7 @@ class SettingsController extends Controller
      */
     public function destroy(Request $request, string $key): JsonResponse
     {
-        $scope = $this->scopeFrom($request);
+        $scope = $this->scopeFrom($request, allowMissing: true);
         $this->ensureEditable($key);
 
         $this->manager($scope)->forget($key);
