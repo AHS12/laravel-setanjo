@@ -527,8 +527,12 @@ come from. Things to know:
 - **Deleted records.** Overrides of a record that was deleted are listed as *deleted*. Opening it
   shows only what is stored, which can be cleared one by one or with **Clear all overrides**. The
   Drift screen lists them, and overrides stored for models the dashboard does not know.
-- **UUID/ULID scope models** need `Schema::morphUsingUuids()` (or `morphUsingUlids()`) before the
-  setanjo migrations run, like any polymorphic relation, so the scope id columns can hold them.
+- **UUID/ULID scope models.** Reading and browsing them works with the default integer id
+  columns (nothing can be stored for them there, so the lookups are skipped, which also keeps
+  Postgres from rejecting the comparison). To *store* overrides for them, the scope id columns
+  must hold their keys: `Schema::morphUsingUuids()` (or `morphUsingUlids()`) before the setanjo
+  migrations run when every scope model uses them, or string id columns when integer and UUID
+  models are mixed.
 
 The page uses the app's CSP nonce when one is set with `Vite::useCspNonce()`. Alpine.js needs
 `'unsafe-eval'` in `script-src`.

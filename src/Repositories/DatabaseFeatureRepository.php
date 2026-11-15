@@ -5,6 +5,7 @@ namespace Ahs12\Setanjo\Repositories;
 use Ahs12\Setanjo\Contracts\FeatureRepositoryInterface;
 use Ahs12\Setanjo\Models\Feature;
 use Ahs12\Setanjo\Models\FeatureOverride;
+use Ahs12\Setanjo\Support\ScopeKey;
 use Ahs12\Setanjo\Support\SettingsCache;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Query\Builder;
@@ -72,6 +73,13 @@ class DatabaseFeatureRepository implements FeatureRepositoryInterface
                 continue;
             }
 
+            // A UUID/ULID key cannot be in an integer scope_id column: nothing stored, nothing to query.
+            if (! ScopeKey::fits(new FeatureOverride, 'scope_id', $scope->getKey())) {
+                $this->overrides[$scopeKey] = [];
+
+                continue;
+            }
+
             $misses[$scopeKey] = $scope;
         }
 
@@ -133,7 +141,7 @@ class DatabaseFeatureRepository implements FeatureRepositoryInterface
     {
         $feature = $this->find($key);
 
-        if ($feature === null) {
+        if ($feature === null || ! ScopeKey::fits(new FeatureOverride, 'scope_id', $scope->getKey())) {
             return false;
         }
 

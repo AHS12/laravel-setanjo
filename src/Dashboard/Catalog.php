@@ -10,6 +10,7 @@ use Ahs12\Setanjo\Models\FeatureOverride;
 use Ahs12\Setanjo\Models\Setting;
 use Ahs12\Setanjo\Models\SettingGroup;
 use Ahs12\Setanjo\SetanjoManager;
+use Ahs12\Setanjo\Support\ScopeKey;
 use Ahs12\Setanjo\ValueObjects\ResolvedValue;
 use Carbon\CarbonInterface;
 use Closure;
@@ -187,8 +188,10 @@ class Catalog
     {
         $column = config('setanjo.tenantable_column', 'tenantable');
 
-        return Setting::query()->toBase()->where($column.'_type', $class)->where($column.'_id', $id)->exists()
-            || FeatureOverride::query()->where('scope_type', $class)->where('scope_id', $id)->exists();
+        return (ScopeKey::fits(new Setting, $column.'_id', $id)
+                && Setting::query()->toBase()->where($column.'_type', $class)->where($column.'_id', $id)->exists())
+            || (ScopeKey::fits(new FeatureOverride, 'scope_id', $id)
+                && FeatureOverride::query()->where('scope_type', $class)->where('scope_id', $id)->exists());
     }
 
     /**

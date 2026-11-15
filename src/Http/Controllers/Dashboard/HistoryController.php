@@ -7,6 +7,7 @@ use Ahs12\Setanjo\Enums\SettingType;
 use Ahs12\Setanjo\Exceptions\DashboardException;
 use Ahs12\Setanjo\Listeners\RecordSettingHistory;
 use Ahs12\Setanjo\Models\SettingHistory;
+use Ahs12\Setanjo\Support\ScopeKey;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -38,7 +39,9 @@ class HistoryController extends Controller
             ->when($request->filled('key'), fn ($query) => $query->where('setting_key', $request->input('key')))
             ->when($request->filled('action'), fn ($query) => $query->where('action', $request->input('action')))
             ->when($scopeClass !== null, fn ($query) => $query->where('scope_type', $scopeClass))
-            ->when($request->filled('scope_id'), fn ($query) => $query->where('scope_id', $request->input('scope_id')))
+            ->when($request->filled('scope_id'), fn ($query) => ScopeKey::fits(new SettingHistory, 'scope_id', $request->input('scope_id'))
+                ? $query->where('scope_id', $request->input('scope_id'))
+                : $query->whereRaw('1 = 0'))
             ->orderByDesc('id')
             ->paginate((int) $request->input('per_page', 50));
 

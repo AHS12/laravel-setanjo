@@ -3,6 +3,7 @@
 namespace Ahs12\Setanjo\Models;
 
 use Ahs12\Setanjo\Enums\SettingType;
+use Ahs12\Setanjo\Support\ScopeKey;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
@@ -155,8 +156,12 @@ class Setting extends Model
             return $query->global();
         }
 
-        return $query->where($column.'_type', get_class($tenant))
-            ->where($column.'_id', $tenant->getKey());
+        $query->where($column.'_type', get_class($tenant));
+
+        // A UUID/ULID key cannot be in an integer id column: match nothing instead of erroring (Postgres).
+        return ScopeKey::fits($query->getModel(), $column.'_id', $tenant->getKey())
+            ? $query->where($column.'_id', $tenant->getKey())
+            : $query->whereRaw('1 = 0');
     }
 
     /**
