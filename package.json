@@ -1,0 +1,17 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:css && npm run build:js",
+    "build:css": "tailwindcss -i resources/css/dashboard.css -o dist/dashboard.css --minify",
+    "build:js": "esbuild resources/js/dashboard.js --bundle --minify --format=iife --target=es2020 --outfile=dist/dashboard.js",
+    "dev": "npm run build:css -- --watch & npm run build:js -- --watch"
+  },
+  "devDependencies": {
+    "@tailwindcss/cli": "4.1.11",
+    "alpinejs": "3.14.9",
+    "esbuild": "0.25.5",
+    "sortablejs": "1.15.6",
+    "tailwindcss": "4.1.11"
+  }
+}

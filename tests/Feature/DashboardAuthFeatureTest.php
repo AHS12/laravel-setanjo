@@ -2,6 +2,7 @@
 
 namespace Ahs12\Setanjo\Tests\Feature;
 
+use Ahs12\Setanjo\Dashboard\Assets;
 use Ahs12\Setanjo\Setanjo;
 use Ahs12\Setanjo\SetanjoServiceProvider;
 use Ahs12\Setanjo\Tests\Models\User;
@@ -102,5 +103,18 @@ describe('Dashboard access', function () {
             ->assertOk()
             ->assertSee('setanjo-config', false)
             ->assertSee('"canManage":true', false);
+    });
+
+    it('inlines the prebuilt assets so nothing has to be published', function () {
+        Setanjo::auth(fn () => true);
+
+        expect(Assets::css())->not->toBeEmpty()
+            ->and(Assets::js())->not->toBeEmpty()
+            ->and(Assets::js())->not->toContain('</script');
+
+        $this->get('/setanjo')
+            ->assertOk()
+            ->assertSee('x-data="setanjo"', false)
+            ->assertSee(substr(Assets::css(), 0, 60), false);
     });
 });
