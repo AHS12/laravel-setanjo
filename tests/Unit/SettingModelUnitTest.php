@@ -156,7 +156,7 @@ describe('Setting Scopes', function () {
         $query = Setting::query();
         $globalQuery = $query->global();
 
-        expect($globalQuery->toSql())->toContain('where "tenantable_type" is null and "tenantable_id" is null');
+        expect(str_replace(['`', '"'], '', $globalQuery->toSql()))->toContain('where tenantable_type is null and tenantable_id is null');
     });
 
     it('scopes tenant settings correctly', function () {
@@ -166,13 +166,13 @@ describe('Setting Scopes', function () {
         $query = Setting::query();
         $tenantQuery = $query->forTenant($company);
 
-        expect($tenantQuery->toSql())->toContain('where "tenantable_type" = ? and "tenantable_id" = ?');
+        expect(str_replace(['`', '"'], '', $tenantQuery->toSql()))->toContain('where tenantable_type = ? and tenantable_id = ?');
     });
 
     it('scopes to global when tenant is null', function () {
         $query = Setting::query();
         $tenantQuery = $query->forTenant(null);
 
-        expect($tenantQuery->toSql())->toContain('where "tenantable_type" is null and "tenantable_id" is null');
+        expect(str_replace(['`', '"'], '', $tenantQuery->toSql()))->toContain('where tenantable_type is null and tenantable_id is null');
     });
 });
