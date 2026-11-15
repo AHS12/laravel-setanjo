@@ -1,5 +1,16 @@
 # Upgrade Guide
 
+## From 3.0 to 3.1
+
+No migrations and no code changes. 3.1 adds a dashboard at `/setanjo`, open in the `local`
+environment only. To use it elsewhere, define a `viewSetanjo` gate (see the README). To turn it
+off, set `SETANJO_DASHBOARD_ENABLED=false`; no routes are registered then.
+
+If you published `config/setanjo.php`, add the `dashboard` and `scopes` keys from the package
+config to change the defaults.
+
+If the app already has a route at `/setanjo`, move the dashboard with `SETANJO_DASHBOARD_PATH`.
+
 ## From 2.x to 3.0
 
 v3 is additive: the 2.x API (`Settings::get/set/has/forget/all/flush/for/forTenantId`,

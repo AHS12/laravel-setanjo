@@ -1,0 +1,44 @@
+name: dashboard-assets
+
+on:
+  push:
+    paths:
+      - 'resources/js/**'
+      - 'resources/css/**'
+      - 'resources/views/**'
+      - 'dist/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/dashboard-assets.yml'
+  pull_request:
+    paths:
+      - 'resources/js/**'
+      - 'resources/css/**'
+      - 'resources/views/**'
+      - 'dist/**'
+      - 'package.json'
+      - 'package-lock.json'
+
+jobs:
+  build:
+    name: dist is up to date
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Fail when dist/ differs from a fresh build
+        run: |
+          if ! git diff --exit-code --stat -- dist; then
+            echo "::error::dist/ is stale. Run 'npm run build' and commit the result."
+            exit 1
+          fi

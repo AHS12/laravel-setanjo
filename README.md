@@ -28,6 +28,7 @@ A powerful Laravel package for managing application settings and configurations.
 -   🗂️ **Groups & Ordering**: Group settings and order groups and settings (drag-and-drop ready)
 -   🔄 **Sync, Export, Import**: Keep the database in line with code; move settings between environments
 -   📣 **Events & History**: Hook audit logging into events, or let the package record history
+-   🖥️ **Dashboard**: A built-in UI for settings, groups, flags, overrides, drift, history and import/export
 
 ## Requirements
 - PHP 8.4 or higher
@@ -390,6 +391,77 @@ to clear other caches.
 
 Set `history.enabled` to `true` to record every change (value, meta, scope, causer) in
 `setanjo_history`. Values of settings with meta `sensitive => true` are masked.
+
+## Dashboard
+
+Setanjo ships a web UI at `/setanjo`. Host apps need no Livewire, Vue or Node: the page
+inlines its prebuilt assets, so nothing has to be published and `composer update` never
+leaves stale assets behind.
+
+| Screen | What you can do |
+| --- | --- |
+| Settings | Edit values with editors chosen by type and meta (toggle, number + unit, select, JSON, color, ...); drag to reorder settings, move them between groups and reorder groups; reset to default |
+| Feature flags | Set each flag's global state (default / on / off); see override counts |
+| Overrides | Pick a record of any configured scope type, then set or remove its flag and setting overrides; every row shows the effective value and where it came from |
+| Groups | Create, edit, delete and reorder groups |
+| Meta | Edit the meta stored for a setting or flag next to the meta declared in code (key/value or raw JSON) |
+| Drift | Compare definitions with the database; preview `setanjo:sync`, then run it |
+| History | Browse recorded changes by key, action and scope (when `history.enabled`) |
+| Import / export | Download a `setanjo:export` file; check and import one |
+
+Locked settings (`is_locked`) and settings with meta `readonly => true` cannot be changed from
+the dashboard. Values with meta `sensitive => true` are never sent to the browser.
+
+### Access
+
+The dashboard is open in the `local` environment only. Everywhere else, define a gate:
+
+```php
+// AppServiceProvider::boot()
+Gate::define('viewSetanjo', fn (User $user) => $user->isAdmin());
+
+// optional: who may change things (default: whoever may view)
+Gate::define('manageSetanjo', fn (User $user) => $user->isSuperAdmin());
+```
+
+Or take full control with callbacks, which win over the gates and the environment:
+
+```php
+use Ahs12\Setanjo\Setanjo;
+
+Setanjo::auth(fn (Request $request) => $request->user()?->isAdmin() ?? false);
+Setanjo::manage(fn (Request $request) => $request->user()?->isSuperAdmin() ?? false);
+```
+
+### Configuration
+
+```php
+'dashboard' => [
+    'enabled' => env('SETANJO_DASHBOARD_ENABLED', true),   // false: no routes at all
+    'path' => env('SETANJO_DASHBOARD_PATH', 'setanjo'),
+    'domain' => env('SETANJO_DASHBOARD_DOMAIN'),
+    'middleware' => ['web'],                                 // add 'auth' etc. here
+    'readonly' => env('SETANJO_DASHBOARD_READONLY', false),  // view only, for everyone
+],
+
+// Models the Overrides screen can manage. Empty = the tenant models from tenancy_mode.
+'scopes' => [
+    App\Models\User::class => [
+        'label' => 'name',                              // column or fn ($user) => ...
+        'search' => ['name', 'email'],                  // columns searched with LIKE
+        'description' => fn ($user) => $user->email,
+        'without_scopes' => true,                       // ignore global scopes (tenant, branch)
+    ],
+    App\Models\Branch::class => ['search' => ['name']],
+],
+```
+
+The page uses the app's CSP nonce when one is set with `Vite::useCspNonce()`. Alpine.js needs
+`'unsafe-eval'` in `script-src`.
+
+The UI talks to a JSON API under `/setanjo/api` (same middleware and access rules). Every write
+goes through the package API, so validation, events, history and cache invalidation behave
+exactly as in code.
 
 ## Commands
 
