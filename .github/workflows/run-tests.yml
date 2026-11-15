@@ -59,3 +59,66 @@ jobs:
 
       - name: Execute tests
         run: vendor/bin/pest --ci
+
+  database:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        db: [mysql, pgsql]
+        laravel: [13.*, 12.*]
+        include:
+          - laravel: 13.*
+            testbench: 11.*
+          - laravel: 12.*
+            testbench: 10.*
+          - db: mysql
+            port: 3306
+            username: root
+          - db: pgsql
+            port: 5432
+            username: postgres
+
+    name: ${{ matrix.db }} - L${{ matrix.laravel }}
+
+    services:
+      mysql:
+        image: ${{ matrix.db == 'mysql' && 'mysql:8.4' || '' }}
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: setanjo_test
+        ports: ['3306:3306']
+        options: --health-cmd="mysqladmin ping -psecret" --health-interval=10s --health-timeout=5s --health-retries=5
+      pgsql:
+        image: ${{ matrix.db == 'pgsql' && 'postgres:17' || '' }}
+        env:
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: setanjo_test
+        ports: ['5432:5432']
+        options: --health-cmd=pg_isready --health-interval=10s --health-timeout=5s --health-retries=5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.4
+          extensions: dom, curl, libxml, mbstring, zip, pcntl, pdo, pdo_mysql, pdo_pgsql, bcmath, intl, fileinfo
+          coverage: none
+
+      - name: Install dependencies
+        run: |
+          composer require "laravel/framework:${{ matrix.laravel }}" "orchestra/testbench:${{ matrix.testbench }}" --no-interaction --no-update
+          composer update --prefer-stable --prefer-dist --no-interaction
+
+      - name: Execute tests
+        env:
+          DB_DRIVER: ${{ matrix.db }}
+          DB_PORT: ${{ matrix.port }}
+          DB_DATABASE: setanjo_test
+          DB_USERNAME: ${{ matrix.username }}
+          DB_PASSWORD: secret
+        run: vendor/bin/pest --ci

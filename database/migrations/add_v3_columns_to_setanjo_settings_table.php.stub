@@ -1,0 +1,64 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $table = $this->getTableName();
+
+        Schema::table($table, function (Blueprint $blueprint) use ($table) {
+            if (! Schema::hasColumn($table, 'group_id')) {
+                $blueprint->foreignId('group_id')
+                    ->nullable()
+                    ->constrained($this->getGroupsTableName())
+                    ->nullOnDelete();
+            }
+            if (! Schema::hasColumn($table, 'sort_order')) {
+                $blueprint->integer('sort_order')->default(0);
+            }
+            if (! Schema::hasColumn($table, 'meta')) {
+                $blueprint->json('meta')->nullable();
+            }
+            if (! Schema::hasColumn($table, 'is_locked')) {
+                $blueprint->boolean('is_locked')->default(false);
+            }
+        });
+
+        // v2 created `type` as string(10); widen it for future types.
+        Schema::table($table, function (Blueprint $blueprint) {
+            $blueprint->string('type', 20)->default('string')->change();
+        });
+    }
+
+    public function down(): void
+    {
+        $table = $this->getTableName();
+
+        Schema::table($table, function (Blueprint $blueprint) use ($table) {
+            // A custom groups_table means the app had its own groups (and group_id) before v3:
+            // keep the column so a rollback never drops data the package did not create.
+            if (Schema::hasColumn($table, 'group_id') && $this->getGroupsTableName() === 'setanjo_groups') {
+                $blueprint->dropConstrainedForeignId('group_id');
+            }
+            foreach (['sort_order', 'meta', 'is_locked'] as $column) {
+                if (Schema::hasColumn($table, $column)) {
+                    $blueprint->dropColumn($column);
+                }
+            }
+        });
+    }
+
+    private function getTableName(): string
+    {
+        return config('setanjo.table', 'settings');
+    }
+
+    private function getGroupsTableName(): string
+    {
+        return config('setanjo.groups_table', 'setanjo_groups');
+    }
+};

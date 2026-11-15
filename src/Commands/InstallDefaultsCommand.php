@@ -10,7 +10,7 @@ class InstallDefaultsCommand extends Command
     protected $signature = 'setanjo:install-defaults 
                             {--force : Force reinstall of existing settings}';
 
-    protected $description = 'Install default settings from configuration';
+    protected $description = 'Install default settings from configuration (deprecated: use setanjo:sync with definitions)';
 
     public function handle(SetanjoManager $settings): int
     {

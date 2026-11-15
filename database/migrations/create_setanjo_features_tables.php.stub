@@ -1,0 +1,64 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        if (! Schema::hasTable($this->featuresTable())) {
+            Schema::create($this->featuresTable(), function (Blueprint $table) {
+                $table->id();
+                $table->string('key', 191)->unique();
+                $table->string('name')->nullable();
+                $table->text('description')->nullable();
+                // Global state; null = fall back to the definition default
+                $table->boolean('enabled')->nullable();
+                $table->foreignId('group_id')
+                    ->nullable()
+                    ->constrained($this->groupsTable())
+                    ->nullOnDelete();
+                $table->integer('sort_order')->default(0);
+                $table->json('meta')->nullable();
+                $table->timestamps();
+            });
+        }
+
+        if (! Schema::hasTable($this->overridesTable())) {
+            Schema::create($this->overridesTable(), function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('feature_id')
+                    ->constrained($this->featuresTable())
+                    ->cascadeOnDelete();
+                $table->morphs('scope');
+                $table->boolean('enabled');
+                $table->timestamps();
+
+                $table->unique(['feature_id', 'scope_type', 'scope_id'], 'setanjo_feature_override_unique');
+            });
+        }
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists($this->overridesTable());
+        Schema::dropIfExists($this->featuresTable());
+    }
+
+    private function featuresTable(): string
+    {
+        return config('setanjo.features.table', 'setanjo_features');
+    }
+
+    private function overridesTable(): string
+    {
+        return config('setanjo.features.overrides_table', 'setanjo_feature_overrides');
+    }
+
+    private function groupsTable(): string
+    {
+        return config('setanjo.groups_table', 'setanjo_groups');
+    }
+};

@@ -1,0 +1,57 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $table = $this->getTableName();
+
+        // Idempotent: apps that already keep groups in their own table (e.g. `settings_group`)
+        // can point `setanjo.groups_table` at it and only get the missing columns added.
+        if (! Schema::hasTable($table)) {
+            Schema::create($table, function (Blueprint $table) {
+                $table->id();
+                $table->string('name');
+                $table->string('slug', 191)->unique();
+                $table->text('description')->nullable();
+                $table->string('icon', 100)->nullable();
+                $table->integer('sort_order')->default(0);
+                $table->json('meta')->nullable();
+                $table->timestamps();
+            });
+
+            return;
+        }
+
+        Schema::table($table, function (Blueprint $blueprint) use ($table) {
+            if (! Schema::hasColumn($table, 'description')) {
+                $blueprint->text('description')->nullable();
+            }
+            if (! Schema::hasColumn($table, 'icon')) {
+                $blueprint->string('icon', 100)->nullable();
+            }
+            if (! Schema::hasColumn($table, 'sort_order')) {
+                $blueprint->integer('sort_order')->default(0);
+            }
+            if (! Schema::hasColumn($table, 'meta')) {
+                $blueprint->json('meta')->nullable();
+            }
+        });
+    }
+
+    public function down(): void
+    {
+        if ($this->getTableName() === 'setanjo_groups') {
+            Schema::dropIfExists($this->getTableName());
+        }
+    }
+
+    private function getTableName(): string
+    {
+        return config('setanjo.groups_table', 'setanjo_groups');
+    }
+};
