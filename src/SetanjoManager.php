@@ -2,14 +2,49 @@
 
 namespace Ahs12\Setanjo;
 
+use Ahs12\Setanjo\Contracts\FeatureRepositoryInterface;
+use Ahs12\Setanjo\Contracts\SettingDefinition;
 use Ahs12\Setanjo\Contracts\SettingsRepositoryInterface;
+use Ahs12\Setanjo\Definitions\DefinitionRegistry;
+use Ahs12\Setanjo\Enums\SettingType;
+use Ahs12\Setanjo\Enums\ValueSource;
+use Ahs12\Setanjo\Events\SettingForgotten;
+use Ahs12\Setanjo\Events\SettingMetaUpdated;
+use Ahs12\Setanjo\Events\SettingsFlushed;
+use Ahs12\Setanjo\Events\SettingUpdated;
+use Ahs12\Setanjo\Exceptions\InvalidSettingValueException;
 use Ahs12\Setanjo\Exceptions\InvalidTenantException;
+use Ahs12\Setanjo\Features\PendingFeature;
+use Ahs12\Setanjo\Features\PendingFeatures;
+use Ahs12\Setanjo\Groups\GroupManager;
+use Ahs12\Setanjo\Support\ScopeResolver;
+use Ahs12\Setanjo\ValueObjects\ResolvedValue;
+use BackedEnum;
+use Closure;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\Validator;
 
 class SetanjoManager
 {
     protected $currentTenant = null;
 
-    public function __construct(protected SettingsRepositoryInterface $repository) {}
+    protected DefinitionRegistry $definitions;
+
+    protected ScopeResolver $scopes;
+
+    protected FeatureRepositoryInterface $features;
+
+    public function __construct(
+        protected SettingsRepositoryInterface $repository,
+        ?DefinitionRegistry $definitions = null,
+        ?ScopeResolver $scopes = null,
+        ?FeatureRepositoryInterface $features = null,
+    ) {
+        $this->definitions = $definitions ?? app(DefinitionRegistry::class);
+        $this->scopes = $scopes ?? app(ScopeResolver::class);
+        $this->features = $features ?? app(FeatureRepositoryInterface::class);
+    }
 
     /**
      * Set the current tenant for subsequent operations
@@ -41,37 +76,86 @@ class SetanjoManager
     }
 
     /**
-     * Get a setting value
+     * The scope this manager reads and writes (null = global).
      */
-    public function get(string $key, $default = null)
+    public function tenant(): ?Model
     {
-        return $this->repository->get($key, $default, $this->currentTenant);
+        return $this->currentTenant;
     }
 
     /**
-     * Set a setting value
+     * Get the value stored for the current scope.
+     *
+     * Falls back to $default, then to the definition default. Does not walk the scope
+     * chain; use {@see effective()} for that.
      */
-    public function set(string $key, $value): self
+    public function get(string|BackedEnum|SettingDefinition $key, $default = null)
     {
-        $this->repository->set($key, $value, $this->currentTenant);
+        $key = DefinitionRegistry::keyOf($key);
+        $record = $this->repository->record($key, $this->currentTenant);
+
+        if ($record !== null) {
+            return $record['value'];
+        }
+
+        return $default ?? $this->definitions->get($key)?->default();
+    }
+
+    /**
+     * Set a setting value for the current scope.
+     *
+     * @param  array<string, mixed>|null  $meta  merged into the key's meta when given
+     */
+    public function set(string|BackedEnum|SettingDefinition $key, $value, ?array $meta = null): self
+    {
+        $key = DefinitionRegistry::keyOf($key);
+        $definition = $this->definitions->get($key);
+        $type = null;
+
+        if ($definition?->isFeature()) {
+            throw InvalidSettingValueException::isFeature($key);
+        }
+
+        if ($definition !== null) {
+            $this->ensureScopeAllowed($definition, $this->currentTenant);
+            $value = $this->prepareValue($definition, $value);
+            $type = $definition->type();
+        }
+
+        $previous = $this->repository->record($key, $this->currentTenant);
+
+        $this->repository->set($key, $value, $this->currentTenant, $type);
+
+        if ($meta !== null) {
+            $this->setMeta($key, $meta);
+        }
+
+        event(new SettingUpdated($key, $this->currentTenant, $previous['value'] ?? null, $value, $previous === null));
 
         return $this;
     }
 
     /**
-     * Check if a setting exists
+     * Check if a setting is stored for the current scope (a stored null counts).
      */
-    public function has(string $key): bool
+    public function has(string|BackedEnum|SettingDefinition $key): bool
     {
-        return $this->repository->has($key, $this->currentTenant);
+        return $this->repository->has(DefinitionRegistry::keyOf($key), $this->currentTenant);
     }
 
     /**
-     * Remove a setting
+     * Remove a setting for the current scope
      */
-    public function forget(string $key): self
+    public function forget(string|BackedEnum|SettingDefinition $key): self
     {
+        $key = DefinitionRegistry::keyOf($key);
+        $previous = $this->repository->record($key, $this->currentTenant);
+
         $this->repository->forget($key, $this->currentTenant);
+
+        if ($previous !== null) {
+            event(new SettingForgotten($key, $this->currentTenant, $previous['value']));
+        }
 
         return $this;
     }
@@ -91,7 +175,390 @@ class SetanjoManager
     {
         $this->repository->flush($this->currentTenant);
 
+        event(new SettingsFlushed($this->currentTenant));
+
         return $this;
+    }
+
+    /**
+     * The effective value: first scope in the chain that has a value, then global, then default.
+     */
+    public function effective(string|BackedEnum|SettingDefinition $key, $default = null): mixed
+    {
+        $resolved = $this->explain($key);
+
+        if ($resolved->source === ValueSource::DEFAULT && $resolved->value === null) {
+            return $default;
+        }
+
+        return $resolved->value;
+    }
+
+    /**
+     * Resolve a key for this manager's subject and report where the value came from.
+     */
+    public function explain(string|BackedEnum|SettingDefinition $key): ResolvedValue
+    {
+        return $this->resolve(DefinitionRegistry::keyOf($key), $this->subject());
+    }
+
+    /**
+     * Resolve a key for an explicit subject through the configured scope chain.
+     */
+    public function resolve(string $key, ?Model $subject): ResolvedValue
+    {
+        $definition = $this->definitions->get($key);
+        $chain = $this->scopes->chain($subject, $definition?->scopes() ?? []);
+
+        $this->repository->loadMany([...$chain, null]);
+
+        foreach ($chain as $scope) {
+            $record = $this->repository->record($key, $scope);
+
+            if ($record !== null) {
+                return new ResolvedValue($key, $record['value'], ValueSource::SCOPE, $scope);
+            }
+        }
+
+        $global = $this->repository->record($key, null);
+
+        if ($global !== null) {
+            return new ResolvedValue($key, $global['value'], ValueSource::GLOBAL);
+        }
+
+        return new ResolvedValue($key, $definition?->default(), ValueSource::DEFAULT);
+    }
+
+    /**
+     * The subject used for resolution: the current scope, or the default subject (auth user).
+     */
+    public function subject(): ?Model
+    {
+        return $this->currentTenant ?? $this->scopes->defaultSubject();
+    }
+
+    /**
+     * Effective meta for a key: definition meta merged with the meta stored on the global row.
+     *
+     * Meta belongs to the key, not to a scope, so this ignores the current tenant.
+     */
+    public function meta(string|BackedEnum|SettingDefinition $key, ?string $item = null, mixed $default = null): mixed
+    {
+        $key = DefinitionRegistry::keyOf($key);
+        $meta = array_replace(
+            $this->definitions->get($key)?->meta() ?? [],
+            $this->repository->record($key, null)['meta'] ?? [],
+        );
+
+        return $item === null ? $meta : Arr::get($meta, $item, $default);
+    }
+
+    /**
+     * Merge items into the meta stored for a key.
+     *
+     * @param  array<string, mixed>  $meta
+     */
+    public function setMeta(string|BackedEnum|SettingDefinition $key, array $meta): self
+    {
+        $key = DefinitionRegistry::keyOf($key);
+        $stored = $this->repository->record($key, null)['meta'] ?? [];
+
+        return $this->writeMeta($key, array_replace($stored, $meta));
+    }
+
+    /**
+     * Replace the meta stored for a key (null clears it; definition meta still applies).
+     *
+     * @param  array<string, mixed>|null  $meta
+     */
+    public function replaceMeta(string|BackedEnum|SettingDefinition $key, ?array $meta): self
+    {
+        return $this->writeMeta(DefinitionRegistry::keyOf($key), $meta === [] ? null : $meta);
+    }
+
+    /**
+     * Everything known about a key, resolved for this manager's subject.
+     *
+     * @return array<string, mixed>
+     */
+    public function describe(string|BackedEnum|SettingDefinition $key): array
+    {
+        $key = DefinitionRegistry::keyOf($key);
+        $definition = $this->definitions->get($key);
+        $global = $this->repository->record($key, null);
+        $resolved = $this->explain($key);
+
+        return [
+            'key' => $key,
+            'defined' => $definition !== null,
+            'label' => $definition?->label() ?? $key,
+            'description' => $definition?->description() ?? $global['description'] ?? null,
+            'type' => $definition?->type()->value ?? $global['type'] ?? null,
+            'group' => DefinitionRegistry::groupSlug($definition),
+            'group_id' => $global['group_id'] ?? null,
+            'is_feature' => (bool) $definition?->isFeature(),
+            'is_locked' => (bool) ($global['is_locked'] ?? false),
+            'default' => $definition?->default(),
+            'value' => $resolved->value,
+            'source' => $resolved->source->value,
+            'scope_type' => $resolved->scope ? $resolved->scope::class : null,
+            'scope_id' => $resolved->scope?->getKey(),
+            'meta' => $this->meta($key),
+        ];
+    }
+
+    public function definitions(): DefinitionRegistry
+    {
+        return $this->definitions;
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    public function define(string $key, array $attributes = []): SettingDefinition
+    {
+        return $this->definitions->define($key, $attributes);
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    public function defineFeature(string $key, array $attributes = []): SettingDefinition
+    {
+        return $this->definitions->define($key, ['feature' => true, ...$attributes]);
+    }
+
+    public function feature(string|BackedEnum|SettingDefinition $key): PendingFeature
+    {
+        return new PendingFeature($this, DefinitionRegistry::keyOf($key));
+    }
+
+    public function features(): PendingFeatures
+    {
+        return new PendingFeatures($this);
+    }
+
+    public function groups(): GroupManager
+    {
+        return new GroupManager($this, $this->repository);
+    }
+
+    /**
+     * @param  Closure(Model|null): iterable<Model|null>|null  $resolver
+     */
+    public function resolveScopesUsing(?Closure $resolver): self
+    {
+        $this->scopes->resolveScopesUsing($resolver);
+
+        return $this;
+    }
+
+    /**
+     * @param  Closure(): (Model|null)|null  $resolver
+     */
+    public function resolveDefaultSubjectUsing(?Closure $resolver): self
+    {
+        $this->scopes->resolveDefaultSubjectUsing($resolver);
+
+        return $this;
+    }
+
+    public function scopeResolver(): ScopeResolver
+    {
+        return $this->scopes;
+    }
+
+    /**
+     * Forget the cached payload of one scope (default: the current scope).
+     */
+    public function forgetCache(?Model $scope = null): self
+    {
+        $scope ??= $this->currentTenant;
+
+        $this->repository->forgetCache($scope);
+        $this->repository->reset();
+        $this->features->forgetCache($scope);
+
+        return $this;
+    }
+
+    /**
+     * Invalidate every cached scope (settings and feature flags).
+     */
+    public function flushCache(): self
+    {
+        $this->repository->flushCache();
+        $this->features->reset();
+
+        return $this;
+    }
+
+    public function featureRepository(): FeatureRepositoryInterface
+    {
+        return $this->features;
+    }
+
+    /**
+     * Resolve a feature flag for a subject: closest scope override, then global state, then default.
+     */
+    public function resolveFeature(string $key, ?Model $subject): ResolvedValue
+    {
+        $definition = $this->definitions->get($key);
+        $chain = $this->scopes->chain($subject, $definition?->scopes() ?? []);
+
+        $this->features->loadOverrides($chain);
+
+        foreach ($chain as $scope) {
+            $overrides = $this->features->overrides($scope);
+
+            if (array_key_exists($key, $overrides)) {
+                return new ResolvedValue($key, $overrides[$key], ValueSource::SCOPE, $scope);
+            }
+        }
+
+        $global = $this->features->flag($key)['enabled'] ?? null;
+
+        if ($global !== null) {
+            return new ResolvedValue($key, (bool) $global, ValueSource::GLOBAL);
+        }
+
+        return new ResolvedValue($key, (bool) ($definition?->default() ?? false), ValueSource::DEFAULT);
+    }
+
+    /**
+     * Attributes used when a feature row has to be created for a key that only exists in code.
+     *
+     * @return array<string, mixed>
+     */
+    public function featureAttributes(?SettingDefinition $definition): array
+    {
+        return $definition === null ? [] : [
+            'name' => $definition->label(),
+            'description' => $definition->description(),
+        ];
+    }
+
+    /**
+     * @throws InvalidSettingValueException when the scope may not override the key
+     */
+    public function assertScopeAllowed(string $key, ?Model $scope): void
+    {
+        $definition = $this->definitions->get($key);
+
+        if ($definition !== null) {
+            $this->ensureScopeAllowed($definition, $scope);
+        }
+    }
+
+    public function repository(): SettingsRepositoryInterface
+    {
+        return $this->repository;
+    }
+
+    /**
+     * Validate and coerce a value against its definition.
+     *
+     * @throws InvalidSettingValueException
+     */
+    public function prepareValue(SettingDefinition $definition, mixed $value): mixed
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $key = $definition->key();
+
+        if (config('setanjo.validation.values', true)) {
+            $rules = $this->valueRules($definition);
+
+            if ($rules !== []) {
+                $validator = Validator::make(['value' => $value], ['value' => $rules]);
+
+                if ($validator->fails()) {
+                    throw InvalidSettingValueException::failedValidation($key, $validator->errors()->toArray());
+                }
+            }
+        }
+
+        return $definition->type()->coerce($value, $key);
+    }
+
+    /**
+     * @return array<int, mixed>
+     */
+    protected function valueRules(SettingDefinition $definition): array
+    {
+        $rules = $definition->rules();
+        $rules = is_string($rules) ? explode('|', $rules) : $rules;
+        $meta = $this->meta($definition);
+        $type = $definition->type();
+
+        if (in_array($type, [SettingType::INTEGER, SettingType::FLOAT], true)) {
+            if (isset($meta['min']) || isset($meta['max'])) {
+                $rules[] = 'numeric';
+            }
+            if (isset($meta['min']) && is_numeric($meta['min'])) {
+                $rules[] = 'min:'.$meta['min'];
+            }
+            if (isset($meta['max']) && is_numeric($meta['max'])) {
+                $rules[] = 'max:'.$meta['max'];
+            }
+        }
+
+        if (! empty($meta['options']) && is_array($meta['options']) && ! in_array($type, [SettingType::ARRAY, SettingType::JSON, SettingType::OBJECT], true)) {
+            $allowed = array_is_list($meta['options']) ? $meta['options'] : array_keys($meta['options']);
+            $rules[] = 'in:'.implode(',', array_map('strval', $allowed));
+        }
+
+        return $rules;
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $meta
+     */
+    protected function writeMeta(string $key, ?array $meta): self
+    {
+        if ($meta !== null) {
+            $bytes = strlen(json_encode($meta, JSON_THROW_ON_ERROR));
+            $max = (int) config('setanjo.meta.max_bytes', 16384);
+
+            if ($max > 0 && $bytes > $max) {
+                throw InvalidSettingValueException::metaTooLarge($key, $bytes, $max);
+            }
+        }
+
+        $definition = $this->definitions->get($key);
+        $old = $this->repository->record($key, null)['meta'] ?? null;
+
+        $this->repository->updateAttributes($key, ['meta' => $meta], null, $this->createWith($definition));
+
+        event(new SettingMetaUpdated($key, null, $old, $meta));
+
+        return $this;
+    }
+
+    /**
+     * Value + type used when a row has to be created for a key that only exists in code.
+     *
+     * @return array{value: mixed, type: SettingType}
+     */
+    public function createWith(?SettingDefinition $definition): array
+    {
+        return [
+            'value' => $definition?->default(),
+            'type' => $definition?->type() ?? SettingType::STRING,
+        ];
+    }
+
+    protected function ensureScopeAllowed(SettingDefinition $definition, ?Model $scope): void
+    {
+        $allowed = $definition->scopes();
+
+        if ($scope === null || $allowed === [] || $this->scopes->isAllowed($scope, $allowed)) {
+            return;
+        }
+
+        throw InvalidSettingValueException::scopeNotAllowed($definition->key(), $scope::class);
     }
 
     /**

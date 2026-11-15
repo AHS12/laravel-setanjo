@@ -19,6 +19,10 @@ describe('Setting Model', function () {
             'value',
             'description',
             'type',
+            'group_id',
+            'sort_order',
+            'meta',
+            'is_locked',
         ]);
     });
 

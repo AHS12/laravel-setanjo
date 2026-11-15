@@ -3,146 +3,214 @@
 namespace Ahs12\Setanjo\Repositories;
 
 use Ahs12\Setanjo\Contracts\SettingsRepositoryInterface;
+use Ahs12\Setanjo\Enums\SettingType;
 use Ahs12\Setanjo\Models\Setting;
+use Ahs12\Setanjo\Support\SettingsCache;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Cache;
 
 class DatabaseSettingsRepository implements SettingsRepositoryInterface
 {
+    /**
+     * In-memory rows per scope key: [scopeKey => [settingKey => record]].
+     *
+     * @var array<string, array<string, array<string, mixed>>>
+     */
     protected array $loadedSettings = [];
+
+    protected SettingsCache $cache;
+
+    public function __construct(?SettingsCache $cache = null)
+    {
+        $this->cache = $cache ?? new SettingsCache;
+    }
 
     public function get(string $key, $default = null, $tenant = null)
     {
-        $this->loadSettingsForTenant($tenant);
+        $record = $this->record($key, $tenant);
 
-        $tenantKey = $this->getTenantKey($tenant);
-
-        return $this->loadedSettings[$tenantKey][$key] ?? $default;
+        return $record === null ? $default : $record['value'];
     }
 
-    public function set(string $key, $value, $tenant = null): void
+    public function set(string $key, $value, $tenant = null, ?SettingType $type = null): void
     {
-        $setting = $this->findOrCreateSetting($key, $tenant);
+        $setting = $this->findOrNew($key, $tenant);
 
-        $setting->setTypeFromValue($value);
+        $setting->type = $type ?? SettingType::fromValue($value);
         $setting->value = $value;
         $setting->save();
 
-        // Update loaded settings cache
-        $tenantKey = $this->getTenantKey($tenant);
-        $this->loadedSettings[$tenantKey][$key] = $value;
-
-        // update cache
-        $this->updateCache($tenant);
+        $this->remember($setting, $tenant);
     }
 
     public function has(string $key, $tenant = null): bool
     {
-        $this->loadSettingsForTenant($tenant);
-
-        $tenantKey = $this->getTenantKey($tenant);
-
-        return isset($this->loadedSettings[$tenantKey][$key]);
+        return $this->record($key, $tenant) !== null;
     }
 
     public function forget(string $key, $tenant = null): void
     {
         Setting::forTenant($tenant)->where('key', $key)->delete();
 
-        // Update loaded settings cache
-        $tenantKey = $this->getTenantKey($tenant);
-        unset($this->loadedSettings[$tenantKey][$key]);
+        $this->loadSettingsForTenant($tenant);
+        unset($this->loadedSettings[$this->getTenantKey($tenant)][$key]);
 
-        // update cache
-        $this->updateCache($tenant);
+        $this->forgetCache($tenant);
     }
 
     public function all($tenant = null): Collection
     {
-        $this->loadSettingsForTenant($tenant);
-
-        $tenantKey = $this->getTenantKey($tenant);
-
-        return collect($this->loadedSettings[$tenantKey] ?? []);
+        return collect($this->records($tenant))->map(fn (array $record) => $record['value']);
     }
 
     public function flush($tenant = null): void
     {
         Setting::forTenant($tenant)->delete();
 
-        $tenantKey = $this->getTenantKey($tenant);
-        $this->loadedSettings[$tenantKey] = [];
+        $this->loadedSettings[$this->getTenantKey($tenant)] = [];
 
-        // Clear cache
-        $this->clearCache($tenant);
+        $this->forgetCache($tenant);
+    }
+
+    public function record(string $key, $tenant = null): ?array
+    {
+        $this->loadSettingsForTenant($tenant);
+
+        return $this->loadedSettings[$this->getTenantKey($tenant)][$key] ?? null;
+    }
+
+    public function records($tenant = null): array
+    {
+        $this->loadSettingsForTenant($tenant);
+
+        return $this->loadedSettings[$this->getTenantKey($tenant)] ?? [];
+    }
+
+    public function loadMany(array $tenants): void
+    {
+        $misses = [];
+
+        foreach ($tenants as $tenant) {
+            $tenantKey = $this->getTenantKey($tenant);
+
+            if (isset($this->loadedSettings[$tenantKey]) || isset($misses[$tenantKey])) {
+                continue;
+            }
+
+            $cached = $this->cache->get($tenantKey);
+
+            if (is_array($cached)) {
+                $this->loadedSettings[$tenantKey] = $cached;
+
+                continue;
+            }
+
+            $misses[$tenantKey] = $tenant;
+        }
+
+        if ($misses === []) {
+            return;
+        }
+
+        $column = config('setanjo.tenantable_column', 'tenantable');
+        $grouped = array_fill_keys(array_keys($misses), []);
+
+        // (scope A) OR (scope B) ... wrapped in one group so outer conditions still apply to all
+        Setting::query()
+            ->where(function (Builder $query) use ($misses) {
+                foreach ($misses as $tenant) {
+                    $query->orWhere(fn (Builder $scope) => $scope->forTenant($tenant));
+                }
+            })
+            ->get()
+            ->each(function (Setting $setting) use (&$grouped, $column) {
+                $type = $setting->getAttribute($column.'_type');
+                $tenantKey = $type === null ? 'global' : $type.':'.$setting->getAttribute($column.'_id');
+
+                $grouped[$tenantKey][$setting->key] = $this->toRecord($setting);
+            });
+
+        foreach ($misses as $tenantKey => $tenant) {
+            $this->loadedSettings[$tenantKey] = $grouped[$tenantKey] ?? [];
+            $this->cache->put($tenantKey, $this->loadedSettings[$tenantKey]);
+        }
+    }
+
+    public function find(string $key, $tenant = null): ?Setting
+    {
+        return Setting::forTenant($tenant)->where('key', $key)->first();
+    }
+
+    public function updateAttributes(string $key, array $attributes, $tenant = null, array $createWith = []): void
+    {
+        $setting = $this->findOrNew($key, $tenant);
+
+        if (! $setting->exists) {
+            $setting->type = $createWith['type'] ?? SettingType::fromValue($createWith['value'] ?? null);
+            $setting->value = $createWith['value'] ?? null;
+        }
+
+        $setting->forceFill(array_intersect_key($attributes, array_flip([
+            'meta', 'group_id', 'sort_order', 'is_locked', 'description',
+        ])));
+        $setting->save();
+
+        $this->remember($setting, $tenant);
+    }
+
+    public function forgetCache($tenant = null): void
+    {
+        $this->cache->forget($this->getTenantKey($tenant));
+    }
+
+    public function flushCache(): void
+    {
+        $this->cache->flush();
+        $this->loadedSettings = [];
+    }
+
+    public function reset(): void
+    {
+        $this->loadedSettings = [];
     }
 
     protected function loadSettingsForTenant($tenant): void
     {
-        $tenantKey = $this->getTenantKey($tenant);
-
-        if (isset($this->loadedSettings[$tenantKey])) {
-            return;
+        if (! isset($this->loadedSettings[$this->getTenantKey($tenant)])) {
+            $this->loadMany([$tenant]);
         }
-
-        $cacheKey = $this->getCacheKey($tenant);
-
-        if (config('setanjo.cache.enabled', true)) {
-            $store = Cache::store(config('setanjo.cache.store'));
-
-            // Use tags if supported (Redis, Memcached)
-            if ($this->supportsCacheTags($store)) {
-                $settings = $store->tags(['setanjo', 'settings'])
-                    ->remember($cacheKey, config('setanjo.cache.ttl', 3600), function () use ($tenant) {
-                        return $this->loadSettingsFromDatabase($tenant);
-                    });
-            } else {
-                $settings = $store->remember($cacheKey, config('setanjo.cache.ttl', 3600), function () use ($tenant) {
-                    return $this->loadSettingsFromDatabase($tenant);
-                });
-            }
-        } else {
-            $settings = $this->loadSettingsFromDatabase($tenant);
-        }
-
-        $this->loadedSettings[$tenantKey] = $settings;
     }
 
     /**
-     * Check if cache store supports tags
+     * Put a freshly saved row into memory and drop the scope's cached payload.
      */
-    protected function supportsCacheTags($store): bool
+    protected function remember(Setting $setting, $tenant): void
     {
-        return method_exists($store, 'tags') &&
-            in_array($this->getCurrentCacheDriver(), ['redis', 'memcached']);
+        $this->loadSettingsForTenant($tenant);
+        $this->loadedSettings[$this->getTenantKey($tenant)][$setting->key] = $this->toRecord($setting);
+
+        $this->forgetCache($tenant);
     }
 
     /**
-     * Get current cache driver name
+     * @return array<string, mixed>
      */
-    protected function getCurrentCacheDriver(): string
+    protected function toRecord(Setting $setting): array
     {
-        $storeConfig = config('setanjo.cache.store');
-
-        return $storeConfig ?: config('cache.default');
+        return [
+            'value' => $setting->value,
+            'type' => $setting->getRawOriginal('type') ?: SettingType::STRING->value,
+            'meta' => $setting->meta,
+            'group_id' => $setting->group_id,
+            'sort_order' => (int) $setting->sort_order,
+            'is_locked' => (bool) $setting->is_locked,
+            'description' => $setting->description,
+        ];
     }
 
-    protected function loadSettingsFromDatabase($tenant): array
+    protected function findOrNew(string $key, $tenant = null): Setting
     {
-        $settings = [];
-
-        Setting::forTenant($tenant)->get()->each(function ($setting) use (&$settings) {
-            $settings[$setting->key] = $setting->value;
-        });
-
-        return $settings;
-    }
-
-    protected function findOrCreateSetting(string $key, $tenant = null): Setting
-    {
-        $query = Setting::forTenant($tenant)->where('key', $key);
-
-        $setting = $query->first();
+        $setting = $this->find($key, $tenant);
 
         if (! $setting) {
             $setting = new Setting(['key' => $key]);
@@ -164,60 +232,5 @@ class DatabaseSettingsRepository implements SettingsRepositoryInterface
         }
 
         return get_class($tenant).':'.$tenant->getKey();
-    }
-
-    protected function getCacheKey($tenant): string
-    {
-        $prefix = config('setanjo.cache.prefix', 'setanjo');
-        $tenantKey = $this->getTenantKey($tenant);
-
-        return "{$prefix}:settings:{$tenantKey}";
-    }
-
-    protected function clearCache($tenant): void
-    {
-        if (! config('setanjo.cache.enabled', true)) {
-            return;
-        }
-
-        $store = Cache::store(config('setanjo.cache.store'));
-        $cacheKey = $this->getCacheKey($tenant);
-
-        // Use tags if supported
-        if ($this->supportsCacheTags($store)) {
-            $store->tags(['setanjo', 'settings'])->forget($cacheKey);
-        } else {
-            // Clear specific cache key
-            $store->forget($cacheKey);
-        }
-    }
-
-    /**
-     * Update cache with current loaded settings
-     */
-    protected function updateCache($tenant): void
-    {
-        if (! config('setanjo.cache.enabled', true)) {
-            return;
-        }
-
-        $tenantKey = $this->getTenantKey($tenant);
-
-        // Only update if we have loaded settings for this tenant
-        if (! isset($this->loadedSettings[$tenantKey])) {
-            return;
-        }
-
-        $cacheKey = $this->getCacheKey($tenant);
-        $store = Cache::store(config('setanjo.cache.store'));
-        $ttl = config('setanjo.cache.ttl', 3600);
-
-        // Use tags if supported
-        if ($this->supportsCacheTags($store)) {
-            $store->tags(['setanjo', 'settings'])
-                ->put($cacheKey, $this->loadedSettings[$tenantKey], $ttl);
-        } else {
-            $store->put($cacheKey, $this->loadedSettings[$tenantKey], $ttl);
-        }
     }
 }
