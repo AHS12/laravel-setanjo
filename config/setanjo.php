@@ -205,6 +205,10 @@ return [
     |   Setanjo::manage() or the `manageSetanjo` gate when you define them;
     |   both are always checked, whatever the middleware list.
     |
+    | brand: title, logo URL and accent colour (hex, e.g. '#0ea5e9') so the
+    |   dashboard looks like part of your app. home: the link behind the
+    |   "Back to app" item (null hides it).
+    |
     */
     'dashboard' => [
         'enabled' => env('SETANJO_DASHBOARD_ENABLED', true),
@@ -213,6 +217,36 @@ return [
         'middleware' => ['web', Authorize::class],
         'require_auth' => env('SETANJO_DASHBOARD_REQUIRE_AUTH', true),
         'readonly' => env('SETANJO_DASHBOARD_READONLY', false),
+        'brand' => [
+            'title' => env('SETANJO_DASHBOARD_TITLE', 'Setanjo'),
+            'logo' => null,
+            'color' => null,
+        ],
+        'home' => '/',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | HTTP API
+    |--------------------------------------------------------------------------
+    |
+    | Everything the dashboard does, as a JSON API for your own admin UI,
+    | scripts or other services (docs/API.md). Off by default. It works
+    | without the dashboard (dashboard.enabled can be false).
+    |
+    | middleware: like the dashboard's list, but for API clients. Add the
+    |   auth your clients use; Authorize then checks the `viewSetanjo` gate:
+    |     ['api', 'auth:sanctum', Authorize::class]
+    |     ['api', 'auth:sanctum', 'can:manage-settings']  your rule alone decides
+    |   dashboard.require_auth, dashboard.readonly and the manage rules
+    |   (Setanjo::manage() / `manageSetanjo`) apply here too.
+    |
+    */
+    'api' => [
+        'enabled' => env('SETANJO_API_ENABLED', false),
+        'prefix' => env('SETANJO_API_PREFIX', 'api/setanjo'),
+        'domain' => env('SETANJO_API_DOMAIN'),
+        'middleware' => ['api', Authorize::class],
     ],
 
     /*

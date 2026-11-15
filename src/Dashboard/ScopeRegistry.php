@@ -195,6 +195,57 @@ class ScopeRegistry
     }
 
     /**
+     * The records of the given ids that the dashboard can see, keyed by the id as a string.
+     * Ids that are malformed, deleted or hidden by a global scope are left out.
+     *
+     * @param  array<int, int|string>  $ids
+     * @return array<string, Model>
+     */
+    public function findMany(string $alias, array $ids): array
+    {
+        $query = $this->query($this->type($alias), withTrashed: true);
+        $model = $query->getModel();
+        $candidates = array_values(array_filter($ids, fn ($id) => $this->looksLikeKey($model, (string) $id)));
+        $found = [];
+
+        foreach (array_chunk($candidates, 500) as $chunk) {
+            foreach ((clone $query)->whereKey($chunk)->get() as $record) {
+                $found[(string) $record->getKey()] = $record;
+            }
+        }
+
+        return $found;
+    }
+
+    /**
+     * Present stored scope references in bulk: one query per scope class instead of one per record.
+     *
+     * @param  array<int, array{0: string, 1: int|string}>  $pairs  [class, id]
+     * @return array<string, array<string, mixed>> keyed by "class:id"
+     */
+    public function references(array $pairs): array
+    {
+        $byClass = [];
+        foreach ($pairs as [$class, $id]) {
+            $byClass[$class][(string) $id] = $id;
+        }
+
+        $presented = [];
+        foreach ($byClass as $class => $ids) {
+            $alias = $this->aliasOf($class);
+            $found = $alias !== null ? $this->findMany($alias, array_values($ids)) : [];
+
+            foreach ($ids as $key => $id) {
+                $presented[$class.':'.$key] = isset($found[$key])
+                    ? $this->present($found[$key], $alias)
+                    : (array) $this->reference($class, $id);
+            }
+        }
+
+        return $presented;
+    }
+
+    /**
      * Whether the id can be a key of the type at all (digits for integer keys).
      */
     public function acceptsKey(string $alias, int|string $id): bool

@@ -99,9 +99,10 @@ class PendingFeature
     public function inherit(): self
     {
         $scope = $this->target();
+        $previous = $this->override();
 
         if ($scope === null) {
-            if (($this->repository()->flag($this->key)['enabled'] ?? null) === null) {
+            if ($previous === null) {
                 return $this;
             }
 
@@ -110,7 +111,7 @@ class PendingFeature
             return $this;
         }
 
-        event(new FeatureToggled($this->key, $scope, null));
+        event(new FeatureToggled($this->key, $scope, null, $previous === null ? null : (bool) $previous));
 
         return $this;
     }
@@ -194,6 +195,7 @@ class PendingFeature
     {
         $scope = $this->target();
         $attributes = $this->manager->featureAttributes($this->definition());
+        $previous = $this->override();
 
         if ($scope === null) {
             $this->repository()->setGlobal($this->key, $state, $attributes);
@@ -203,7 +205,7 @@ class PendingFeature
             $this->repository()->setOverride($this->key, $scope, $state, $attributes);
         }
 
-        event(new FeatureToggled($this->key, $scope, $state));
+        event(new FeatureToggled($this->key, $scope, $state, $previous === null ? null : (bool) $previous));
 
         return $this;
     }

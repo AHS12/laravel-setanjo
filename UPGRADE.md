@@ -12,6 +12,21 @@ config to change the defaults. Keep `Authorize::class` in `dashboard.middleware`
 Read-only mode and the `manageSetanjo` gate apply either way.
 
 If the app already has a route at `/setanjo`, move the dashboard with `SETANJO_DASHBOARD_PATH`.
+The optional `dashboard.brand` (title, logo, accent colour) and `dashboard.home` keys change how
+it looks; the defaults apply without them.
+
+3.1 also adds an HTTP API with the same endpoints (`docs/API.md`). It is off until you set
+`SETANJO_API_ENABLED=true`; add the `api` block from the package config to choose its prefix
+and middleware.
+
+Two small behaviour changes in history (only when `history.enabled`):
+
+- Saving the value a key already has (or the same meta, or a flag state it already has) no longer
+  writes a history row.
+- `FeatureToggled` has a new `previous` property (the explicit state before the change), and
+  toggle rows now store it in `old_value` (`'true'`, `'false'` or `'inherit'`). Toggle rows written
+  before 3.1 keep `null` there and cannot be reverted from the dashboard. Code that dispatches the
+  event itself keeps working: the argument is optional.
 
 ## From 2.x to 3.0
 

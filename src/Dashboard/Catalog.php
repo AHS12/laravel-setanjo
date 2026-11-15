@@ -11,6 +11,8 @@ use Ahs12\Setanjo\Models\Setting;
 use Ahs12\Setanjo\Models\SettingGroup;
 use Ahs12\Setanjo\SetanjoManager;
 use Ahs12\Setanjo\ValueObjects\ResolvedValue;
+use Carbon\CarbonInterface;
+use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -23,6 +25,9 @@ class Catalog
 {
     /** @var array<string, int>|null */
     protected ?array $groupIds = null;
+
+    /** @var array<string, array<string, mixed>> */
+    protected array $presented = [];
 
     public function __construct(
         protected SetanjoManager $manager,
@@ -110,8 +115,10 @@ class Catalog
     public function forScope(Model $scope): array
     {
         $missing = $this->scopes->isGhost($scope);
+        $this->presented = [];
         $repository = $this->manager->repository();
-        $overrides = $this->manager->featureRepository()->overrides($scope);
+        $features = $this->manager->featureRepository();
+        $overrides = $features->overrides($scope);
         $settings = [];
         $flags = [];
 
@@ -127,7 +134,14 @@ class Catalog
                 'allowed' => $this->allows($row['key'], $scope),
                 'overridden' => $stored !== null,
                 'override' => $stored === null ? null : $this->mask($row, $stored['value']),
-                ...($missing ? $this->unresolved() : $this->effective($row, $this->manager->resolve($row['key'], $scope))),
+                ...($missing ? $this->unresolved() : [
+                    ...$this->effective($row, $this->manager->resolve($row['key'], $scope)),
+                    'chain' => $this->chain($row, $scope, function (?Model $level) use ($repository, $row) {
+                        $record = $repository->record($row['key'], $level);
+
+                        return $record === null ? [false, null] : [true, $record['value']];
+                    }),
+                ]),
             ];
         }
 
@@ -142,7 +156,20 @@ class Catalog
                 ...$this->slim($row),
                 'allowed' => $this->allows($row['key'], $scope),
                 'override' => $override,
-                ...($missing ? $this->unresolved() : $this->effective($row, $this->manager->resolveFeature($row['key'], $scope))),
+                ...($missing ? $this->unresolved() : [
+                    ...$this->effective($row, $this->manager->resolveFeature($row['key'], $scope)),
+                    'chain' => $this->chain($row, $scope, function (?Model $level) use ($features, $row) {
+                        if ($level === null) {
+                            $global = $features->flag($row['key'])['enabled'] ?? null;
+
+                            return [$global !== null, $global === null ? null : (bool) $global];
+                        }
+
+                        $levelOverrides = $features->overrides($level);
+
+                        return array_key_exists($row['key'], $levelOverrides) ? [true, $levelOverrides[$row['key']]] : [false, null];
+                    }),
+                ]),
             ];
         }
 
@@ -199,17 +226,10 @@ class Catalog
      */
     public function orphans(): array
     {
-        $column = config('setanjo.tenantable_column', 'tenantable');
-        $classes = Setting::query()->toBase()->whereNotNull($column.'_type')->distinct()->pluck($column.'_type')
-            ->merge(FeatureOverride::query()->distinct()->pluck('scope_type'))
-            ->unique()
-            ->sort()
-            ->values();
-
         $missing = [];
         $unknown = [];
 
-        foreach ($classes as $class) {
+        foreach ($this->scopeClasses() as $class) {
             [$settings, $flags] = $this->overrideCountsFor($class);
             $ids = $this->idsOf($settings, $flags);
             $alias = $this->scopes->aliasOf($class);
@@ -230,6 +250,172 @@ class Catalog
         }
 
         return ['missing_records' => $missing, 'unknown_scope_types' => $unknown];
+    }
+
+    /**
+     * The records that override one setting or flag, newest first, a page at a time,
+     * optionally limited to one scope type.
+     *
+     * @return array{data: array<int, array<string, mixed>>, page: int, per_page: int, total: int, last_page: int}
+     */
+    public function keyOverrides(string $key, bool $feature, ?string $alias = null, int $page = 1, int $perPage = 50): array
+    {
+        $class = $alias !== null ? $this->scopes->type($alias)['class'] : null;
+
+        if ($feature) {
+            $typeColumn = 'scope_type';
+            $idColumn = 'scope_id';
+            $query = FeatureOverride::query()->where('feature_id', Feature::query()->where('key', $key)->value('id') ?? 0);
+        } else {
+            $column = config('setanjo.tenantable_column', 'tenantable');
+            $typeColumn = $column.'_type';
+            $idColumn = $column.'_id';
+            $query = Setting::query()->where('key', $key)->whereNotNull($typeColumn);
+        }
+
+        if ($class !== null) {
+            // The tenant column name is configurable, so filter on the base builder.
+            $query->getQuery()->where($typeColumn, $class);
+        }
+
+        $paginator = $query
+            ->orderByDesc('id')
+            ->paginate($perPage, ['*'], 'page', max(1, $page));
+
+        /** @var array<int, Model> $items */
+        $items = $paginator->items();
+        $references = $this->scopes->references(array_map(
+            fn (Model $item) => [(string) $item->getAttribute($typeColumn), $item->getAttribute($idColumn)],
+            $items,
+        ));
+        $row = $feature ? [] : ($this->setting($key) ?? []);
+
+        return [
+            'data' => array_map(fn (Model $item) => [
+                'scope' => $references[$item->getAttribute($typeColumn).':'.$item->getAttribute($idColumn)],
+                'value' => $feature ? (bool) $item->getAttribute('enabled') : $this->mask($row, $item->getAttribute('value')),
+                'updated_at' => $item->getAttribute('updated_at') instanceof CarbonInterface
+                    ? $item->getAttribute('updated_at')->toIso8601String()
+                    : null,
+            ], $items),
+            'page' => $paginator->currentPage(),
+            'per_page' => $perPage,
+            'total' => $paginator->total(),
+            'last_page' => max(1, $paginator->lastPage()),
+        ];
+    }
+
+    /**
+     * The numbers on the overview screen.
+     *
+     * @return array<string, mixed>
+     */
+    public function overview(): array
+    {
+        $settings = collect($this->settings());
+        $features = collect($this->features());
+        $scopeTypes = [];
+
+        foreach ($this->scopeClasses() as $class) {
+            [$settingCounts, $flagCounts] = $this->overrideCountsFor($class);
+            $alias = $this->scopes->aliasOf($class);
+
+            $scopeTypes[] = [
+                'type' => $alias,
+                'class' => $class,
+                'name' => $alias !== null ? $this->scopes->type($alias)['name'] : class_basename($class),
+                'records' => $this->idsOf($settingCounts, $flagCounts)->count(),
+                'settings' => (int) $settingCounts->sum(),
+                'features' => (int) $flagCounts->sum(),
+            ];
+        }
+
+        $top = fn (Collection $rows, string $kind) => $rows->where('override_count', '>', 0)
+            ->sortByDesc('override_count')
+            ->take(5)
+            ->map(fn (array $row) => ['kind' => $kind, 'key' => $row['key'], 'label' => $row['label'], 'overrides' => $row['override_count']])
+            ->values()
+            ->all();
+
+        return [
+            'settings' => [
+                'total' => $settings->count(),
+                'stored' => $settings->where('stored', true)->count(),
+                'undefined' => $settings->where('defined', false)->count(),
+                'readonly' => $settings->where('readonly', true)->count(),
+                'overridden' => $settings->where('override_count', '>', 0)->count(),
+            ],
+            'features' => [
+                'total' => $features->count(),
+                'on' => $features->where('enabled', true)->count(),
+                'off' => $features->where('enabled', false)->count(),
+                'overridden' => $features->where('override_count', '>', 0)->count(),
+            ],
+            'groups' => SettingGroup::query()->count(),
+            'scopes' => $scopeTypes,
+            'most_overridden' => [...$top($settings, 'setting'), ...$top($features, 'feature')],
+        ];
+    }
+
+    /**
+     * Whether a scope may override the key (the definition's `scopes()`; empty allows any).
+     */
+    public function allows(string $key, Model $scope): bool
+    {
+        $allowed = $this->manager->definitions()->get($key)?->scopes() ?? [];
+
+        return $allowed === [] || $this->manager->scopeResolver()->isAllowed($scope, $allowed);
+    }
+
+    /**
+     * Every model class that has a setting or flag override stored.
+     *
+     * @return Collection<int, string>
+     */
+    protected function scopeClasses(): Collection
+    {
+        $column = config('setanjo.tenantable_column', 'tenantable');
+
+        return Setting::query()->toBase()->whereNotNull($column.'_type')->distinct()->pluck($column.'_type')
+            ->merge(FeatureOverride::query()->distinct()->pluck('scope_type'))
+            ->map(fn ($class) => (string) $class)
+            ->unique()
+            ->sort()
+            ->values();
+    }
+
+    /**
+     * Every level a value is looked up in, most specific first: the record's scope chain
+     * (e.g. user → branch → tenant), global, then the code default. `set` marks the levels
+     * that store a value; the first one that does is where the effective value comes from.
+     *
+     * @param  array<string, mixed>  $row
+     * @param  Closure(?Model): array{0: bool, 1: mixed}  $lookup
+     * @return array<int, array<string, mixed>>
+     */
+    protected function chain(array $row, Model $scope, Closure $lookup): array
+    {
+        $definition = $this->manager->definitions()->get($row['key']);
+        $levels = [];
+
+        foreach ($this->manager->scopeResolver()->chain($scope, $definition?->scopes() ?? []) as $level) {
+            [$set, $value] = $lookup($level);
+            $levels[] = ['level' => 'scope', 'scope' => $this->presentOnce($level), 'set' => $set, 'value' => $set ? $this->mask($row, $value) : null];
+        }
+
+        [$set, $value] = $lookup(null);
+        $levels[] = ['level' => 'global', 'scope' => null, 'set' => $set, 'value' => $set ? $this->mask($row, $value) : null];
+        $levels[] = ['level' => 'default', 'scope' => null, 'set' => true, 'value' => $row['default'] ?? null];
+
+        return $levels;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function presentOnce(Model $scope): array
+    {
+        return $this->presented[$scope::class.':'.$scope->getKey()] ??= $this->scopes->present($scope);
     }
 
     /**
@@ -396,13 +582,6 @@ class Catalog
             'source' => $resolved->source->value,
             'source_scope' => $resolved->scope ? $this->scopes->present($resolved->scope) : null,
         ];
-    }
-
-    protected function allows(string $key, Model $scope): bool
-    {
-        $allowed = $this->manager->definitions()->get($key)?->scopes() ?? [];
-
-        return $allowed === [] || $this->manager->scopeResolver()->isAllowed($scope, $allowed);
     }
 
     /**

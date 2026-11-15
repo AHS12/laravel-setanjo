@@ -16,6 +16,26 @@ class SettingsController extends Controller
     }
 
     /**
+     * One setting; with scope_type + scope_id, as that record sees it (override, effective value, chain).
+     */
+    public function show(Request $request, string $key): JsonResponse
+    {
+        if ($this->catalog->setting($key) === null) {
+            throw DashboardException::notFound(__('setanjo::dashboard.unknown_key', ['key' => $key]));
+        }
+
+        return $this->respond($key, $this->scopeFrom($request));
+    }
+
+    /**
+     * Every record that overrides the setting, newest first.
+     */
+    public function overrides(Request $request, string $key): JsonResponse
+    {
+        return $this->overridesPage($request, $key, feature: false);
+    }
+
+    /**
      * Set a value globally, or for one scope with scope_type + scope_id.
      */
     public function update(Request $request, string $key): JsonResponse

@@ -29,6 +29,7 @@ A powerful Laravel package for managing application settings and configurations.
 -   🔄 **Sync, Export, Import**: Keep the database in line with code; move settings between environments
 -   📣 **Events & History**: Hook audit logging into events, or let the package record history
 -   🖥️ **Dashboard**: A built-in UI for settings, groups, flags, overrides, drift, history and import/export
+-   🔌 **HTTP API**: Everything the dashboard does, as a JSON API for your own admin UI or services
 
 ## Requirements
 - PHP 8.4 or higher
@@ -390,7 +391,9 @@ Events: `SettingUpdated`, `SettingForgotten`, `SettingMetaUpdated`, `SettingsFlu
 to clear other caches.
 
 Set `history.enabled` to `true` to record every change (value, meta, scope, causer) in
-`setanjo_history`. Values of settings with meta `sensitive => true` are masked.
+`setanjo_history`. Saving the value a key already has is not recorded. Flag changes store the
+previous state too (`FeatureToggled::$previous`), so the dashboard can revert them. Values of
+settings with meta `sensitive => true` are masked.
 
 ## Dashboard
 
@@ -400,17 +403,31 @@ leaves stale assets behind.
 
 | Screen | What you can do |
 | --- | --- |
-| Settings | Edit values with editors chosen by type and meta (toggle, number + unit, select, JSON, color, ...); drag to reorder settings, move them between groups and reorder groups; reset to default |
+| Overview | Counts of settings, flags (on/off), overrides per scope type and drift issues; the latest changes; the most overridden keys |
+| Settings | Edit values with editors chosen by type and meta (toggle, number + unit, select, JSON with validation, color picker, secrets); drag to reorder settings, move them between groups and reorder groups; reset to default |
 | Feature flags | Set each flag's global state (default / on / off); see override counts |
-| Overrides | Pick a record of any configured scope type, then set or remove its flag and setting overrides; every row shows the effective value and where it came from |
+| Setting / flag detail | Click any key: its value, every record that overrides it (newest first, by type), its recent changes with Revert, and copyable code (`Settings::get(...)`, `@feature(...)`, the route middleware). Each key has its own link (`#/flags/new_checkout`) to share |
+| Flag targeting | From the flag's detail: search records of any scope type and turn the flag on or off for them, or paste up to 1000 ids, preview what changes, then apply |
+| Overrides | Pick a record of any configured scope type, then set or remove its flag and setting overrides; every row shows the full resolution chain (`Jane: not set › Acme Ltd: "daily" › Global: "weekly"`) and which level wins |
 | Groups | Create, edit, delete and reorder groups |
 | Meta | Edit the meta stored for a setting or flag next to the meta declared in code (key/value or raw JSON) |
 | Drift | Compare definitions with the database; preview `setanjo:sync`, then run it |
-| History | Browse recorded changes by key, action and scope (when `history.enabled`) |
+| History | Changes grouped by day with readable diffs (JSON keys added/removed/changed), filters by key, action and scope, and **Revert** (when `history.enabled`) |
 | Import / export | Download a `setanjo:export` file; check and import one |
 
+Working faster:
+
+- **Search everything** with <kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd>: settings, flags, groups, records of every
+  scope type, and actions such as "Turn off beta_reports". <kbd>/</kbd> focuses the search of the
+  current screen, <kbd>g</kbd> then a letter switches screens, <kbd>?</kbd> lists every shortcut.
+- **Undo** on every save, reset and flag toggle (from the message that confirms it).
+- **Unsaved edits** are marked; <kbd>Enter</kbd> saves (<kbd>Ctrl</kbd> <kbd>Enter</kbd> for JSON),
+  <kbd>Esc</kbd> undoes the typing, and leaving the screen asks before dropping them.
+- Light, dark or system theme; top navigation that turns into a menu on small screens.
+
 Locked settings (`is_locked`) and settings with meta `readonly => true` cannot be changed from
-the dashboard. Values with meta `sensitive => true` are never sent to the browser.
+the dashboard. Values with meta `sensitive => true` are never sent to the browser, and their
+changes cannot be reverted from history (the old value is not stored).
 
 ### Access
 
@@ -475,6 +492,12 @@ a session login page, or a middleware of your own such as an IP allow-list.
     'middleware' => ['web', Authorize::class],               // see Access
     'require_auth' => env('SETANJO_DASHBOARD_REQUIRE_AUTH', true),
     'readonly' => env('SETANJO_DASHBOARD_READONLY', false),  // view only, for everyone
+    'brand' => [
+        'title' => env('SETANJO_DASHBOARD_TITLE', 'Setanjo'),
+        'logo' => null,                                      // URL or path, e.g. '/img/logo.svg'
+        'color' => null,                                     // accent colour, hex: '#0ea5e9'
+    ],
+    'home' => '/',                                           // "Back to app" link (null hides it)
 ],
 
 // Models the Overrides screen can manage. Empty = the tenant models from tenancy_mode.
@@ -513,6 +536,34 @@ The page uses the app's CSP nonce when one is set with `Vite::useCspNonce()`. Al
 The UI talks to a JSON API under `/setanjo/api` (same middleware and access rules). Every write
 goes through the package API, so validation, events, history and cache invalidation behave
 exactly as in code.
+
+## HTTP API
+
+Build your own screens on top of Setanjo: every dashboard action is also a JSON API (read and
+change settings and flags, per-record overrides and bulk targeting, groups, drift and sync,
+history and revert, import and export). It is off by default:
+
+```dotenv
+SETANJO_API_ENABLED=true
+```
+
+```php
+'api' => [
+    'enabled' => env('SETANJO_API_ENABLED', false),
+    'prefix' => env('SETANJO_API_PREFIX', 'api/setanjo'),
+    'domain' => env('SETANJO_API_DOMAIN'),
+    // Default ['api', Authorize::class]: local only, or the viewSetanjo gate. Add your clients' auth:
+    'middleware' => ['api', 'auth:sanctum', Authorize::class],
+],
+```
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "https://app.test/api/setanjo/features/new_checkout?scope_type=user&scope_id=42"
+```
+
+It needs no session or CSRF token, always answers JSON, and works with the dashboard turned
+off. Read-only mode and the `manageSetanjo` / `Setanjo::manage()` rules apply to it as well.
+Every endpoint, with request and response examples: [docs/API.md](docs/API.md).
 
 ## Commands
 

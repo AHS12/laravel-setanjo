@@ -9,7 +9,9 @@ use Ahs12\Setanjo\Exceptions\InvalidSettingValueException;
 use Ahs12\Setanjo\SetanjoManager;
 use Closure;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use InvalidArgumentException;
 
 abstract class Controller
@@ -62,6 +64,34 @@ abstract class Controller
         }
 
         return $this->scopes->find($type, $id); // throws the right 404
+    }
+
+    /**
+     * The records that override one key, paged: `scope_type` limits it to one type.
+     */
+    protected function overridesPage(Request $request, string $key, bool $feature): JsonResponse
+    {
+        $request->validate([
+            'scope_type' => 'nullable|string',
+            'page' => 'nullable|integer|min:1',
+            'per_page' => 'nullable|integer|min:1|max:200',
+        ]);
+
+        $exists = $feature ? $this->catalog->feature($key) !== null : $this->catalog->setting($key) !== null;
+
+        if (! $exists) {
+            throw DashboardException::notFound(__('setanjo::dashboard.unknown_key', ['key' => $key]));
+        }
+
+        $page = $this->catalog->keyOverrides(
+            $key,
+            $feature,
+            $request->input('scope_type'),
+            (int) $request->input('page', 1),
+            (int) $request->input('per_page', 50),
+        );
+
+        return response()->json(['data' => $page['data'], 'meta' => Arr::except($page, 'data')]);
     }
 
     /**

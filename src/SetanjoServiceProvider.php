@@ -12,6 +12,7 @@ use Ahs12\Setanjo\Contracts\FeatureRepositoryInterface;
 use Ahs12\Setanjo\Contracts\SettingsRepositoryInterface;
 use Ahs12\Setanjo\Dashboard\ScopeRegistry;
 use Ahs12\Setanjo\Definitions\DefinitionRegistry;
+use Ahs12\Setanjo\Http\Middleware\AcceptJson;
 use Ahs12\Setanjo\Http\Middleware\Authorize;
 use Ahs12\Setanjo\Http\Middleware\EnsureFeatureEnabled;
 use Ahs12\Setanjo\Http\Middleware\GuardDashboard;
@@ -117,6 +118,7 @@ class SetanjoServiceProvider extends PackageServiceProvider
         $this->registerHistory();
         $this->registerStateReset();
         $this->registerDashboard();
+        $this->registerApi();
     }
 
     protected function registerMiddleware(): void
@@ -186,6 +188,27 @@ class SetanjoServiceProvider extends PackageServiceProvider
             'as' => 'setanjo.',
         ], function () {
             $this->loadRoutesFrom(__DIR__.'/../routes/dashboard.php');
+        });
+    }
+
+    /**
+     * The public HTTP API: the dashboard's endpoints for your own UI, scripts or other services,
+     * behind `setanjo.api.middleware` (token auth friendly, no session or CSRF). Off by default.
+     */
+    protected function registerApi(): void
+    {
+        if (! config('setanjo.api.enabled', false)) {
+            return;
+        }
+
+        Route::group([
+            'domain' => config('setanjo.api.domain'),
+            'prefix' => trim((string) config('setanjo.api.prefix', 'api/setanjo'), '/'),
+            // JSON answers always, then the app's stack, then the same guard as the dashboard.
+            'middleware' => [AcceptJson::class, ...(array) config('setanjo.api.middleware', ['api', Authorize::class]), GuardDashboard::class],
+            'as' => 'setanjo.http.',
+        ], function () {
+            $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
         });
     }
 }
