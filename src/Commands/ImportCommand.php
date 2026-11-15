@@ -151,9 +151,11 @@ class ImportCommand extends Command
                 ->where('key', $item['key'])
                 ->first() ?? new Setting(['key' => $item['key']]);
 
+            // The tenant column name is configurable, so it is not a static model property.
+            $setting->setAttribute($column.'_type', $scopeType);
+            $setting->setAttribute($column.'_id', $scopeId);
+
             $setting->forceFill([
-                $column.'_type' => $item['scope_type'] ?? null,
-                $column.'_id' => $item['scope_id'] ?? null,
                 'type' => $type,
                 'description' => $item['description'] ?? null,
                 'meta' => $item['meta'] ?? null,

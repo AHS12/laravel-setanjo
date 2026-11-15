@@ -150,9 +150,11 @@ class DatabaseSettingsRepository implements SettingsRepositoryInterface
             $setting->value = $createWith['value'] ?? null;
         }
 
-        $setting->forceFill(array_intersect_key($attributes, array_flip([
-            'meta', 'group_id', 'sort_order', 'is_locked', 'description',
-        ])));
+        foreach (['meta', 'group_id', 'sort_order', 'is_locked', 'description'] as $column) {
+            if (array_key_exists($column, $attributes)) {
+                $setting->setAttribute($column, $attributes[$column]);
+            }
+        }
         $setting->save();
 
         $this->remember($setting, $tenant);
