@@ -27,5 +27,6 @@ _ide_helper_models.php
 # Misc
 phpunit.xml
 phpstan.neon
-/docs
+/docs/*
+!/docs/API.md
 /coverage

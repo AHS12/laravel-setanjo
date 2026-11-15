@@ -231,8 +231,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | Everything the dashboard does, as a JSON API for your own admin UI,
-    | scripts or other services (docs/API.md). Off by default. It works
-    | without the dashboard (dashboard.enabled can be false).
+    | scripts or other services. Off by default. It works without the
+    | dashboard (dashboard.enabled can be false). Every endpoint:
+    | https://github.com/AHS12/laravel-setanjo/blob/main/docs/API.md
     |
     | middleware: like the dashboard's list, but for API clients. Add the
     |   auth your clients use; Authorize then checks the `viewSetanjo` gate:

@@ -15,7 +15,8 @@ If the app already has a route at `/setanjo`, move the dashboard with `SETANJO_D
 The optional `dashboard.brand` (title, logo, accent colour) and `dashboard.home` keys change how
 it looks; the defaults apply without them.
 
-3.1 also adds an HTTP API with the same endpoints (`docs/API.md`). It is off until you set
+3.1 also adds an HTTP API with the same endpoints
+([docs/API.md](https://github.com/AHS12/laravel-setanjo/blob/main/docs/API.md)). It is off until you set
 `SETANJO_API_ENABLED=true`; add the `api` block from the package config to choose its prefix
 and middleware.
 
