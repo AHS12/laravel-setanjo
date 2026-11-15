@@ -37,14 +37,20 @@ A powerful Laravel package for managing application settings and configurations.
 
 | Package version | Laravel | PHP | Testbench | Status |
 | --- | --- | --- | --- | --- |
-| `3.x` | 12, 13 | `^8.4` | 10, 11 | In development |
-| `2.x` | 12, 13 | `^8.4` | 10, 11 | Active |
-| `1.x` | 10, 11, 12 | `^8.2` | 8, 9, 10 | Maintenance / legacy |
+| `3.x` | 12, 13 | `^8.4` | 10, 11 | Active |
+| `2.x` | 12, 13 | `^8.4` | 10, 11 | Maintenance (bug fixes) |
+| `1.x` | 10, 11, 12 | `^8.2` | 8, 9, 10 | Legacy |
 
 If you are on Laravel 10/11 or PHP 8.2/8.3, install the `1.x` line:
 
 ```bash
 composer require "ahs12/laravel-setanjo:^1.0"
+```
+
+To stay on `2.x` for now:
+
+```bash
+composer require "ahs12/laravel-setanjo:^2.0"
 ```
 
 ## Installation
