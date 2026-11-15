@@ -34,6 +34,8 @@ class TestCase extends Orchestra
 
     public function getEnvironmentSetUp($app)
     {
+        // The dashboard runs behind the web middleware (encrypted cookies, sessions).
+        config()->set('app.key', 'base64:'.base64_encode(str_repeat('s', 32)));
         config()->set('database.default', 'testing');
         config()->set('database.connections.testing', static::databaseConnection());
 

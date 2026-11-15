@@ -183,6 +183,47 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Dashboard
+    |--------------------------------------------------------------------------
+    |
+    | A web UI for settings, groups, feature flags and overrides, mounted at
+    | {domain}/{path}. Access is allowed in the local environment; elsewhere
+    | define a `viewSetanjo` gate or call Setanjo::auth(). Writes also need
+    | the `manageSetanjo` gate when you define it.
+    |
+    | readonly: show everything, allow no changes
+    |
+    */
+    'dashboard' => [
+        'enabled' => env('SETANJO_DASHBOARD_ENABLED', true),
+        'path' => env('SETANJO_DASHBOARD_PATH', 'setanjo'),
+        'domain' => env('SETANJO_DASHBOARD_DOMAIN'),
+        'middleware' => ['web'],
+        'readonly' => env('SETANJO_DASHBOARD_READONLY', false),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dashboard Scopes
+    |--------------------------------------------------------------------------
+    |
+    | Models the dashboard can set overrides for, keyed by model class.
+    | Empty = the tenant models from tenancy_mode, labelled by `name`.
+    |
+    |   App\Models\User::class => [
+    |       'label' => 'name',                     // column or fn ($model) => ...
+    |       'search' => ['name', 'email'],         // columns searched with LIKE
+    |       'description' => fn ($user) => $user->email,
+    |       'without_scopes' => true,              // ignore global scopes (tenant, branch)
+    |   ],
+    |
+    */
+    'scopes' => [
+        //
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Default Settings
     |--------------------------------------------------------------------------
     |

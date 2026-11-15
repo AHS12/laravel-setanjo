@@ -1,0 +1,338 @@
+<?php
+
+namespace Ahs12\Setanjo\Dashboard;
+
+use Ahs12\Setanjo\Contracts\SettingDefinition;
+use Ahs12\Setanjo\Definitions\DefinitionRegistry;
+use Ahs12\Setanjo\Enums\SettingType;
+use Ahs12\Setanjo\Models\Feature;
+use Ahs12\Setanjo\Models\FeatureOverride;
+use Ahs12\Setanjo\Models\Setting;
+use Ahs12\Setanjo\Models\SettingGroup;
+use Ahs12\Setanjo\SetanjoManager;
+use Ahs12\Setanjo\ValueObjects\ResolvedValue;
+use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * Builds the rows the dashboard shows: every defined or stored setting and feature flag,
+ * with effective meta, group, order, override counts and sensitive values masked.
+ */
+class Catalog
+{
+    /** @var array<string, int>|null */
+    protected ?array $groupIds = null;
+
+    public function __construct(
+        protected SetanjoManager $manager,
+        protected ScopeRegistry $scopes,
+    ) {}
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function settings(): array
+    {
+        $definitions = $this->manager->definitions();
+        $records = $this->manager->repository()->records(null);
+        $counts = $this->settingOverrideCounts();
+        $order = array_flip(array_keys($definitions->settings()));
+
+        $keys = array_unique([...array_keys($definitions->settings()), ...array_keys($records)]);
+        // Rows of keys defined as features are flags waiting for setanjo:migrate-feature-flags (see drift).
+        $keys = array_filter($keys, fn (string $key) => $definitions->get($key)?->isFeature() !== true);
+
+        $rows = [];
+        foreach ($keys as $key) {
+            $rows[] = $this->settingRow($key, $definitions->get($key), $records[$key] ?? null, $counts[$key] ?? 0, $order[$key] ?? count($order));
+        }
+
+        return $this->sorted($rows);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function setting(string $key): ?array
+    {
+        $definition = $this->manager->definitions()->get($key);
+        $record = $this->manager->repository()->record($key, null);
+
+        if ($definition?->isFeature() || ($definition === null && $record === null)) {
+            return null;
+        }
+
+        return $this->settingRow($key, $definition, $record, $this->settingOverrideCounts()[$key] ?? 0, 0);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    public function features(): array
+    {
+        $definitions = $this->manager->definitions()->features();
+        $flags = $this->manager->featureRepository()->flags();
+        $counts = $this->manager->featureRepository()->overrideCounts();
+        $order = array_flip(array_keys($definitions));
+
+        $rows = [];
+        foreach (array_unique([...array_keys($definitions), ...array_keys($flags)]) as $key) {
+            $rows[] = $this->featureRow($key, $definitions[$key] ?? null, $flags[$key] ?? null, $counts[$key] ?? 0, $order[$key] ?? count($order));
+        }
+
+        return $this->sorted($rows);
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function feature(string $key): ?array
+    {
+        $definition = $this->manager->definitions()->get($key);
+        $flag = $this->manager->featureRepository()->flag($key);
+
+        if ($flag === null && $definition?->isFeature() !== true) {
+            return null;
+        }
+
+        return $this->featureRow($key, $definition, $flag, $this->manager->featureRepository()->overrideCounts()[$key] ?? 0, 0);
+    }
+
+    /**
+     * Every setting and flag as seen by one scope: its own override and the effective value.
+     *
+     * @return array{scope: array<string, mixed>, settings: array<int, array<string, mixed>>, features: array<int, array<string, mixed>>}
+     */
+    public function forScope(Model $scope): array
+    {
+        $repository = $this->manager->repository();
+        $features = $this->manager->featureRepository();
+        $overrides = $features->overrides($scope);
+
+        $settings = array_map(function (array $row) use ($scope, $repository) {
+            $stored = $repository->record($row['key'], $scope);
+            $resolved = $this->manager->resolve($row['key'], $scope);
+
+            return [
+                ...$this->slim($row),
+                'allowed' => $this->allows($row['key'], $scope),
+                'overridden' => $stored !== null,
+                'override' => $stored === null ? null : $this->mask($row, $stored['value']),
+                ...$this->effective($row, $resolved),
+            ];
+        }, $this->settings());
+
+        $flags = array_map(function (array $row) use ($scope, $overrides) {
+            $resolved = $this->manager->resolveFeature($row['key'], $scope);
+
+            return [
+                ...$this->slim($row),
+                'allowed' => $this->allows($row['key'], $scope),
+                'override' => $overrides[$row['key']] ?? null,
+                ...$this->effective($row, $resolved),
+            ];
+        }, $this->features());
+
+        return [
+            'scope' => $this->scopes->present($scope),
+            'settings' => $settings,
+            'features' => $flags,
+        ];
+    }
+
+    /**
+     * Records of a scope type that have at least one setting or flag override.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function overriddenRecords(string $alias, int $limit = 50): array
+    {
+        $class = $this->scopes->type($alias)['class'];
+        $column = config('setanjo.tenantable_column', 'tenantable');
+
+        // The tenant column name is configurable, so query it on the base builder.
+        $settings = Setting::query()->toBase()
+            ->where($column.'_type', $class)
+            ->groupBy($column.'_id')
+            ->selectRaw("{$column}_id as scope_id, COUNT(*) as aggregate")
+            ->pluck('aggregate', 'scope_id');
+
+        $flags = FeatureOverride::query()
+            ->where('scope_type', $class)
+            ->groupBy('scope_id')
+            ->selectRaw('scope_id, COUNT(*) as aggregate')
+            ->pluck('aggregate', 'scope_id');
+
+        $records = [];
+        foreach ($settings->keys()->merge($flags->keys())->unique()->take($limit) as $id) {
+            $records[] = [
+                ...(array) $this->scopes->reference($class, $id),
+                'settings' => (int) ($settings[$id] ?? 0),
+                'features' => (int) ($flags[$id] ?? 0),
+            ];
+        }
+
+        return $records;
+    }
+
+    /**
+     * Mask a value of a setting row marked sensitive.
+     *
+     * @param  array<string, mixed>  $row
+     */
+    public function mask(array $row, mixed $value): mixed
+    {
+        return ($row['sensitive'] ?? false) && $value !== null ? null : $value;
+    }
+
+    public function groupId(?SettingDefinition $definition): ?int
+    {
+        $slug = DefinitionRegistry::groupSlug($definition);
+
+        if ($slug === null) {
+            return null;
+        }
+
+        $this->groupIds ??= SettingGroup::query()->pluck('id', 'slug')->map(fn ($id) => (int) $id)->all();
+
+        return $this->groupIds[$slug] ?? null;
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $record
+     * @return array<string, mixed>
+     */
+    protected function settingRow(string $key, ?SettingDefinition $definition, ?array $record, int $overrides, int $position): array
+    {
+        $definitionMeta = $definition?->meta() ?? [];
+        $storedMeta = $record['meta'] ?? null;
+        $meta = array_replace($definitionMeta, $storedMeta ?? []);
+        $locked = (bool) ($record['is_locked'] ?? false);
+        $sensitive = (bool) ($meta['sensitive'] ?? false);
+        $value = $record !== null ? $record['value'] : $definition?->default();
+
+        return [
+            'key' => $key,
+            'label' => $definition?->label() ?? $key,
+            'description' => $record['description'] ?? $definition?->description(),
+            'type' => $definition?->type()->value ?? $record['type'] ?? SettingType::STRING->value,
+            'defined' => $definition !== null,
+            'stored' => $record !== null,
+            'default' => $sensitive ? null : $definition?->default(),
+            'value' => $sensitive && $value !== null ? null : $value,
+            'masked' => $sensitive && $value !== null,
+            'source' => $record !== null ? 'global' : 'default',
+            'sensitive' => $sensitive,
+            'is_locked' => $locked,
+            'readonly' => $locked || (bool) ($meta['readonly'] ?? false),
+            'group_id' => $record['group_id'] ?? $this->groupId($definition),
+            'sort_order' => $record !== null ? (int) $record['sort_order'] : $position,
+            'meta' => $meta,
+            'definition_meta' => $definitionMeta,
+            'stored_meta' => $storedMeta,
+            'override_count' => $overrides,
+            'scopes' => $this->scopeAliases($definition),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $flag
+     * @return array<string, mixed>
+     */
+    protected function featureRow(string $key, ?SettingDefinition $definition, ?array $flag, int $overrides, int $position): array
+    {
+        $definitionMeta = $definition?->meta() ?? [];
+        $storedMeta = $flag['meta'] ?? null;
+        $default = (bool) ($definition?->default() ?? false);
+        $global = $flag['enabled'] ?? null;
+
+        return [
+            'key' => $key,
+            'label' => $flag['name'] ?? $definition?->label() ?? $key,
+            'description' => $flag['description'] ?? $definition?->description(),
+            'type' => SettingType::BOOLEAN->value,
+            'defined' => $definition?->isFeature() === true,
+            'stored' => $flag !== null,
+            'default' => $default,
+            'global' => $global === null ? null : (bool) $global,
+            'enabled' => $global === null ? $default : (bool) $global,
+            'source' => $global === null ? 'default' : 'global',
+            'group_id' => $flag['group_id'] ?? $this->groupId($definition),
+            'sort_order' => $flag !== null ? (int) $flag['sort_order'] : $position,
+            'meta' => array_replace($definitionMeta, $storedMeta ?? []),
+            'definition_meta' => $definitionMeta,
+            'stored_meta' => $storedMeta,
+            'override_count' => $overrides,
+            'scopes' => $this->scopeAliases($definition),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    protected function slim(array $row): array
+    {
+        return array_intersect_key($row, array_flip([
+            'key', 'label', 'description', 'type', 'group_id', 'sort_order', 'meta', 'sensitive', 'readonly', 'is_locked', 'default',
+        ]));
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    protected function effective(array $row, ResolvedValue $resolved): array
+    {
+        return [
+            'effective' => $this->mask($row, $resolved->value),
+            'source' => $resolved->source->value,
+            'source_scope' => $resolved->scope ? $this->scopes->present($resolved->scope) : null,
+        ];
+    }
+
+    protected function allows(string $key, Model $scope): bool
+    {
+        $allowed = $this->manager->definitions()->get($key)?->scopes() ?? [];
+
+        return $allowed === [] || $this->manager->scopeResolver()->isAllowed($scope, $allowed);
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    protected function scopeAliases(?SettingDefinition $definition): array
+    {
+        return array_values(array_filter(array_map(
+            fn (string $class) => $this->scopes->aliasOf($class) ?? class_basename($class),
+            $definition?->scopes() ?? [],
+        )));
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    protected function settingOverrideCounts(): array
+    {
+        $column = config('setanjo.tenantable_column', 'tenantable');
+
+        return Setting::query()
+            ->whereNotNull($column.'_type')
+            ->groupBy('key')
+            ->select('key', DB::raw('COUNT(*) as aggregate'))
+            ->pluck('aggregate', 'key')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $rows
+     * @return array<int, array<string, mixed>>
+     */
+    protected function sorted(array $rows): array
+    {
+        usort($rows, fn (array $a, array $b) => [$a['sort_order'], $a['label']] <=> [$b['sort_order'], $b['label']]);
+
+        return $rows;
+    }
+}

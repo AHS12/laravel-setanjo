@@ -11,6 +11,7 @@ use Ahs12\Setanjo\Commands\SyncCommand;
 use Ahs12\Setanjo\Contracts\FeatureRepositoryInterface;
 use Ahs12\Setanjo\Contracts\SettingsRepositoryInterface;
 use Ahs12\Setanjo\Definitions\DefinitionRegistry;
+use Ahs12\Setanjo\Http\Middleware\Authorize;
 use Ahs12\Setanjo\Http\Middleware\EnsureFeatureEnabled;
 use Ahs12\Setanjo\Listeners\RecordSettingHistory;
 use Ahs12\Setanjo\Repositories\DatabaseFeatureRepository;
@@ -23,6 +24,7 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Route;
 use InvalidArgumentException;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
@@ -48,6 +50,7 @@ class SetanjoServiceProvider extends PackageServiceProvider
             ->name('setanjo')
             ->hasConfigFile('setanjo')
             ->hasTranslations()
+            ->hasViews('setanjo')
             ->hasMigrations([
                 'create_setanjo_settings_table',
                 'create_setanjo_groups_table',
@@ -109,6 +112,7 @@ class SetanjoServiceProvider extends PackageServiceProvider
         $this->registerGate();
         $this->registerHistory();
         $this->registerStateReset();
+        $this->registerDashboard();
     }
 
     protected function registerMiddleware(): void
@@ -161,6 +165,22 @@ class SetanjoServiceProvider extends PackageServiceProvider
                     $this->app->make($repository)->reset();
                 }
             }
+        });
+    }
+
+    protected function registerDashboard(): void
+    {
+        if (! config('setanjo.dashboard.enabled', true)) {
+            return;
+        }
+
+        Route::group([
+            'domain' => config('setanjo.dashboard.domain'),
+            'prefix' => trim((string) config('setanjo.dashboard.path', 'setanjo'), '/'),
+            'middleware' => [...(array) config('setanjo.dashboard.middleware', ['web']), Authorize::class],
+            'as' => 'setanjo.',
+        ], function () {
+            $this->loadRoutesFrom(__DIR__.'/../routes/dashboard.php');
         });
     }
 }
