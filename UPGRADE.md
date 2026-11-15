@@ -28,7 +28,14 @@ This adds four migrations:
 | `create_setanjo_features_tables` | Creates `setanjo_features` and `setanjo_feature_overrides` |
 
 Every migration checks for existing tables and columns first, so it is safe to run on
-databases that already have some of them.
+databases that already have some of them. Rolling back only drops what v3 added: with a custom
+`groups_table`, an existing `group_id` column and its data are kept.
+
+Run the migrations in **every** environment with a real database (local, staging, production).
+
+> **Minimal upgrade:** steps 1–3 are all that is required. Without registered definitions the
+> package behaves like 2.x (plus the bug fixes in the table below), so app code does not have
+> to change. Definitions and the feature-flag tables can be adopted later.
 
 ### 3. Merge the new config keys
 
@@ -47,6 +54,23 @@ php artisan setanjo:sync
 
 `setanjo:sync` reports keys stored with a type that differs from the definition. Convert them
 with `--force-types` once you have checked the list.
+
+If the enum already had a `type()` method returning a string (`'boolean'`), it must now return
+`SettingType`. Search the app for `->type()`: comparisons such as `$key->type() === 'boolean'`
+do not error, they silently become `false`, and string concatenation or assigning it to a column
+needs `->type()->value`.
+
+### 5. (Optional) Move feature flags into the feature tables
+
+Once flags are defined as features (`isFeature()` returns `true`), `Settings::set()` throws for
+them and they are read from `setanjo_features` / `setanjo_feature_overrides`. Move the existing
+rows with `setanjo:migrate-feature-flags` (pass `--key=` for each flag if no definitions are
+registered yet).
+
+Ship the code change and the data move **in the same deploy** (e.g. inside `php artisan down` /
+`up`). Old code reading the moved rows, or new code reading the empty tables, both fall back to
+the defaults. Also update any command that seeds every enum case with `Settings::set()`: it now
+throws for feature keys.
 
 ## Behaviour changes
 
@@ -76,7 +100,7 @@ If you already have a `settings_group` table and a `settings.group_id` column:
 1. Set `'groups_table' => 'settings_group'` in `config/setanjo.php` **before** migrating.
    The groups migration then only adds `icon` and `meta`; the settings migration skips
    `group_id` because it exists.
-2. Make your `SettingKey` enum implement `SettingDefinition`:
+2. Make your `SettingKey` enum implement `SettingDefinition` (see the `type()` warning in step 4 above):
    - `isFeatureFlag()` → `isFeature()`
    - `defaultValue()` → `default()`
    - `type()` must return `SettingType` instead of a string
@@ -98,6 +122,6 @@ If you already have a `settings_group` table and a `settings.group_id` column:
 | `setGlobalFeatureFlag` / `setUserFeatureFlag(..., 'inherit')` | `feature()->enable()/disable()/inherit()` |
 | `feature:{key}` middleware | `setanjo.feature:{key}` |
 | `settings:sync` command | `setanjo:sync --prune` |
-| Re-implemented cache-key clearing | `Settings::forgetCache($scope)` / `Settings::flushCache()` |
+| Re-implemented cache-key clearing (silently clears nothing in v3: keys are now versioned) | `Settings::forgetCache($scope)` / `Settings::flushCache()`, or delete it: writes clear their own scope |
 | `audit()->record(...)` after each write | a listener on `SettingUpdated` / `FeatureToggled` |
 | Spatie permission cache reset after flag changes | a listener on `FeatureToggled` |

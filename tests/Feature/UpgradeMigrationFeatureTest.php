@@ -87,6 +87,13 @@ describe('Upgrading from v2', function () {
             ->and(Settings::get('tax_enabled'))->toBeTrue()
             ->and(Settings::groups()->keys('finance'))->toBe(['tax_enabled'])
             ->and(Settings::groups()->find('finance')->sort_order)->toBe(2);
+
+        // Rolling back must not drop the app's own group_id column or its data.
+        (include $columns)->down();
+
+        expect(Schema::hasColumn('settings', 'group_id'))->toBeTrue()
+            ->and(Schema::hasColumn('settings', 'meta'))->toBeFalse()
+            ->and(DB::table('settings')->where('key', 'tax_enabled')->value('group_id'))->toBe($groupId);
     });
 
     it('can roll the v3 columns back', function () {

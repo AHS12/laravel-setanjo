@@ -39,7 +39,9 @@ return new class extends Migration
         $table = $this->getTableName();
 
         Schema::table($table, function (Blueprint $blueprint) use ($table) {
-            if (Schema::hasColumn($table, 'group_id')) {
+            // A custom groups_table means the app had its own groups (and group_id) before v3:
+            // keep the column so a rollback never drops data the package did not create.
+            if (Schema::hasColumn($table, 'group_id') && $this->getGroupsTableName() === 'setanjo_groups') {
                 $blueprint->dropConstrainedForeignId('group_id');
             }
             foreach (['sort_order', 'meta', 'is_locked'] as $column) {
