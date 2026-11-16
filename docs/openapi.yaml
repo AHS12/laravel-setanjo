@@ -1,0 +1,1291 @@
+openapi: 3.1.0
+info:
+  title: Setanjo HTTP API
+  version: 3.1.0
+  summary: Settings, feature flags and per-record overrides for a Laravel app.
+  description: |
+    The JSON API of [laravel-setanjo](https://github.com/AHS12/laravel-setanjo). It serves
+    everything the dashboard does, for your own admin UI, scripts or other services.
+
+    Turn it on with `SETANJO_API_ENABLED=true` and pick its middleware in
+    `config/setanjo.php` (`api.middleware`). The prefix is `api/setanjo` unless
+    `SETANJO_API_PREFIX` changes it. The guide, with auth setups and examples:
+    https://github.com/AHS12/laravel-setanjo/blob/main/docs/API.md
+
+    - Every response is JSON, errors included, whatever `Accept` header is sent.
+    - Authentication is whatever your middleware list uses (Sanctum tokens are shown here).
+      Writes also need `Setanjo::manage()` / the `manageSetanjo` gate when defined, and are
+      refused in read-only mode.
+    - Values of settings with meta `sensitive: true` are never returned (`null`, `masked: true`).
+    - The API follows the package's semantic versioning: fields may be added in minor
+      releases, nothing is removed or renamed before the next major version.
+  license:
+    name: MIT
+    url: https://github.com/AHS12/laravel-setanjo/blob/main/LICENSE.md
+servers:
+  - url: '{app}/{prefix}'
+    variables:
+      app:
+        default: https://app.test
+        description: Your application's URL.
+      prefix:
+        default: api/setanjo
+        description: '`setanjo.api.prefix`'
+security:
+  - bearerAuth: []
+tags:
+  - name: Overview
+  - name: Settings
+  - name: Feature flags
+  - name: Groups
+  - name: Scopes
+    description: Records (users, companies, branches…) that can override values.
+  - name: Drift
+    description: Definitions in code compared with the database.
+  - name: History
+    description: Recorded changes (when `setanjo.history.enabled`).
+  - name: Transfer
+    description: Export and import in the `setanjo:export` format.
+
+paths:
+  /overview:
+    get:
+      tags: [Overview]
+      operationId: getOverview
+      summary: Counts of settings, flags and overrides
+      responses:
+        '200':
+          description: The counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Overview' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /settings:
+    get:
+      tags: [Settings]
+      operationId: listSettings
+      summary: Every defined or stored setting
+      responses:
+        '200': { $ref: '#/components/responses/SettingList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /settings/order:
+    post:
+      tags: [Settings]
+      operationId: orderSettings
+      summary: Put settings into a group, in order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderKeys' }
+      responses:
+        '200': { $ref: '#/components/responses/SettingList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /settings/{key}:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    get:
+      tags: [Settings]
+      operationId: getSetting
+      summary: One setting, globally or as one record sees it
+      description: Without `scope_type` and `scope_id` the global row; with them, the row as that record sees it.
+      parameters:
+        - $ref: '#/components/parameters/ScopeTypeQuery'
+        - $ref: '#/components/parameters/ScopeIdQuery'
+      responses:
+        '200':
+          description: The setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/Setting'
+                      - $ref: '#/components/schemas/ScopedSetting'
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Settings]
+      operationId: setSetting
+      summary: Set the value, globally or for one record
+      description: The value is validated and cast by the definition (422 with `errors.value` when it fails). Locked or read-only settings answer 403.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value:
+                  description: The new value, of the setting's type.
+                scope_type: { $ref: '#/components/schemas/ScopeTypeAlias' }
+                scope_id: { $ref: '#/components/schemas/RecordId' }
+            example: { value: 90 }
+      responses:
+        '200': { $ref: '#/components/responses/SettingWrite' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    delete:
+      tags: [Settings]
+      operationId: forgetSetting
+      summary: Remove the stored value
+      description: Globally the definition default applies again; for a record it inherits from the next level up. Works for records that were deleted.
+      parameters:
+        - $ref: '#/components/parameters/ScopeTypeQuery'
+        - $ref: '#/components/parameters/ScopeIdQuery'
+      responses:
+        '200':
+          description: The setting after the change (`data` is `null` when an undefined key is gone, or a deleted record has nothing left).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/Setting'
+                      - $ref: '#/components/schemas/ScopedSetting'
+                      - type: 'null'
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /settings/{key}/meta:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    put:
+      tags: [Settings]
+      operationId: setSettingMeta
+      summary: Replace or merge the stored meta
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MetaWrite' }
+      responses:
+        '200':
+          description: The setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Setting' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /settings/{key}/overrides:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    get:
+      tags: [Settings]
+      operationId: listSettingOverrides
+      summary: Records that override the setting, newest first
+      parameters:
+        - $ref: '#/components/parameters/ScopeTypeQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200': { $ref: '#/components/responses/KeyOverrides' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /features:
+    get:
+      tags: [Feature flags]
+      operationId: listFeatures
+      summary: Every feature flag
+      responses:
+        '200': { $ref: '#/components/responses/FeatureList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /features/order:
+    post:
+      tags: [Feature flags]
+      operationId: orderFeatures
+      summary: Put flags into a group, in order
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OrderKeys' }
+      responses:
+        '200': { $ref: '#/components/responses/FeatureList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /features/{key}:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    get:
+      tags: [Feature flags]
+      operationId: getFeature
+      summary: One flag, globally or as one record sees it
+      parameters:
+        - $ref: '#/components/parameters/ScopeTypeQuery'
+        - $ref: '#/components/parameters/ScopeIdQuery'
+      responses:
+        '200':
+          description: The flag.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/Feature'
+                      - $ref: '#/components/schemas/ScopedFeature'
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Feature flags]
+      operationId: setFeature
+      summary: Turn on, off, or back to default / inherit
+      description: '`state: null` clears the global state (the default applies) or a record''s override (it inherits). Setting a state needs a live record; clearing also works for a deleted one.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [state]
+              properties:
+                state: { type: [boolean, 'null'] }
+                scope_type: { $ref: '#/components/schemas/ScopeTypeAlias' }
+                scope_id: { $ref: '#/components/schemas/RecordId' }
+            example: { state: true, scope_type: user, scope_id: 42 }
+      responses:
+        '200':
+          description: The flag (global) or the record's row (scoped).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/Feature'
+                      - $ref: '#/components/schemas/ScopedFeature'
+                      - type: 'null'
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /features/{key}/meta:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    put:
+      tags: [Feature flags]
+      operationId: setFeatureMeta
+      summary: Replace or merge the stored meta
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/MetaWrite' }
+      responses:
+        '200':
+          description: The flag.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Feature' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /features/{key}/overrides:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    get:
+      tags: [Feature flags]
+      operationId: listFeatureOverrides
+      summary: Records that override the flag, newest first
+      parameters:
+        - $ref: '#/components/parameters/ScopeTypeQuery'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200': { $ref: '#/components/responses/KeyOverrides' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      tags: [Feature flags]
+      operationId: bulkFeatureOverrides
+      summary: Turn the flag on, off or back to inherit for many records
+      description: Up to 1000 ids of one scope type; blank entries are skipped. With `dry_run` nothing is written and the answer says what would change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope_type, ids, state]
+              properties:
+                scope_type: { $ref: '#/components/schemas/ScopeTypeAlias' }
+                ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 1000
+                  items: { $ref: '#/components/schemas/RecordId' }
+                state: { type: [boolean, 'null'] }
+                dry_run: { type: boolean, default: false }
+            example: { scope_type: user, ids: ['12', '15', '42'], state: true, dry_run: true }
+      responses:
+        '200':
+          description: What matched and what changed (or would change).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/BulkResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /groups:
+    get:
+      tags: [Groups]
+      operationId: listGroups
+      summary: Groups in order
+      responses:
+        '200': { $ref: '#/components/responses/GroupList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Groups]
+      operationId: createGroup
+      summary: Create a group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/GroupWrite'
+                - required: [name]
+      responses:
+        '201':
+          description: The new group.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /groups/order:
+    post:
+      tags: [Groups]
+      operationId: orderGroups
+      summary: Reorder groups
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids]
+              properties:
+                ids: { type: array, items: { type: integer } }
+      responses:
+        '200': { $ref: '#/components/responses/GroupList' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /groups/{group}:
+    parameters:
+      - name: group
+        in: path
+        required: true
+        schema: { type: integer }
+    put:
+      tags: [Groups]
+      operationId: updateGroup
+      summary: Update a group
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupWrite' }
+      responses:
+        '200':
+          description: The group.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/Group' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+    delete:
+      tags: [Groups]
+      operationId: deleteGroup
+      summary: Delete a group (its settings and flags become ungrouped)
+      responses:
+        '204': { description: 'Deleted.' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /scopes:
+    get:
+      tags: [Scopes]
+      operationId: listScopeTypes
+      summary: Scope types the API can manage
+      responses:
+        '200':
+          description: The types (`setanjo.scopes`, or the tenancy config).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScopeType' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /scopes/{type}:
+    parameters:
+      - $ref: '#/components/parameters/ScopeTypePath'
+    get:
+      tags: [Scopes]
+      operationId: listScopeRecords
+      summary: Records with overrides (paged), or a search
+      description: 'Without `search`, the records of the type that store overrides, in id order, paged (`overridden: true`). With `search`, matching records by the configured search columns or the id (`overridden: false`, no paging).'
+      parameters:
+        - name: search
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: The records.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, overridden]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      oneOf:
+                        - $ref: '#/components/schemas/RecordWithCounts'
+                        - $ref: '#/components/schemas/Record'
+                  overridden: { type: boolean }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /scopes/{type}/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ScopeTypePath'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string }
+    get:
+      tags: [Scopes]
+      operationId: getScopeRecord
+      summary: Every setting and flag as one record sees it
+      description: A record that was deleted but still has overrides answers with only those overrides (`scope.state` is `missing`).
+      responses:
+        '200': { $ref: '#/components/responses/ScopeView' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Scopes]
+      operationId: clearScopeRecord
+      summary: Remove every override of one record
+      responses:
+        '200': { $ref: '#/components/responses/ScopeView' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /drift:
+    get:
+      tags: [Drift]
+      operationId: getDrift
+      summary: Definitions in code compared with the database
+      responses:
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { $ref: '#/components/schemas/DriftReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /sync:
+    post:
+      tags: [Drift]
+      operationId: runSync
+      summary: Run setanjo:sync
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dry_run: { type: boolean, default: false }
+                prune: { type: boolean, default: false }
+                force_types: { type: boolean, default: false }
+                reset_meta: { type: boolean, default: false }
+                reset_groups: { type: boolean, default: false }
+      responses:
+        '200':
+          description: The command's output and the report after it.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [exit_code, output, data]
+                properties:
+                  exit_code: { type: integer }
+                  output: { type: string }
+                  data: { $ref: '#/components/schemas/DriftReport' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /history:
+    get:
+      tags: [History]
+      operationId: listHistory
+      summary: Recorded changes, newest first
+      parameters:
+        - name: key
+          in: query
+          schema: { type: string }
+        - name: action
+          in: query
+          schema: { $ref: '#/components/schemas/HistoryAction' }
+        - name: scope_type
+          in: query
+          schema: { $ref: '#/components/schemas/ScopeTypeAlias' }
+        - name: scope_id
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: 'The changes, or `enabled: false` with a message when history is off.'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, data]
+                properties:
+                  enabled: { type: boolean }
+                  message: { type: string, description: 'Only when history is off.' }
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/HistoryEntry' }
+                  meta:
+                    type: object
+                    required: [current_page, last_page, total]
+                    properties:
+                      current_page: { type: integer }
+                      last_page: { type: integer }
+                      total: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /history/{history}/revert:
+    parameters:
+      - name: history
+        in: path
+        required: true
+        schema: { type: integer }
+    post:
+      tags: [History]
+      operationId: revertHistoryEntry
+      summary: Undo one recorded change
+      description: Writes back the value, meta or flag state the change replaced, for the same scope. The revert is recorded as a new change. 422 when the entry cannot be reverted (`revertable` is false).
+      responses:
+        '200':
+          description: What was reverted.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: object
+                    required: [key, kind, scope]
+                    properties:
+                      key: { type: string }
+                      kind: { type: string, enum: [setting, feature] }
+                      scope:
+                        oneOf:
+                          - $ref: '#/components/schemas/Record'
+                          - type: 'null'
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /export:
+    get:
+      tags: [Transfer]
+      operationId: exportSettings
+      summary: Download a setanjo:export file
+      parameters:
+        - name: global
+          in: query
+          description: Global settings only.
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: 'The export, as a file download (`Content-Disposition: attachment`).'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExportFile' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /import:
+    post:
+      tags: [Transfer]
+      operationId: importSettings
+      summary: Import a setanjo:export file or payload
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary, description: 'A setanjo:export JSON file, up to 10 MB.' }
+                dry_run: { type: boolean }
+          application/json:
+            schema:
+              type: object
+              required: [payload]
+              properties:
+                payload: { $ref: '#/components/schemas/ExportFile' }
+                dry_run: { type: boolean }
+      responses:
+        '200': { $ref: '#/components/responses/CommandResult' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422':
+          description: Invalid input, not a setanjo export, or the import failed (then with `exit_code` and `output`).
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ValidationError'
+                  - $ref: '#/components/schemas/CommandResult'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: An API token, for example from Laravel Sanctum (`auth:sanctum` in `setanjo.api.middleware`). Any auth your middleware list accepts works.
+
+  parameters:
+    Key:
+      name: key
+      in: path
+      required: true
+      description: The setting or flag key, URL-encoded. May contain dots, dashes and colons, not `/`.
+      schema: { type: string }
+    ScopeTypePath:
+      name: type
+      in: path
+      required: true
+      description: A scope type alias from `GET /scopes`.
+      schema: { type: string }
+    ScopeTypeQuery:
+      name: scope_type
+      in: query
+      description: A scope type alias from `GET /scopes`. Leave out (with `scope_id`) for global.
+      schema: { type: string }
+    ScopeIdQuery:
+      name: scope_id
+      in: query
+      description: The record's id. Required with `scope_type`.
+      schema: { type: string }
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+
+  responses:
+    SettingList:
+      description: The settings.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: array
+                items: { $ref: '#/components/schemas/Setting' }
+    SettingWrite:
+      description: The setting (global) or the record's row (scoped).
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                oneOf:
+                  - $ref: '#/components/schemas/Setting'
+                  - $ref: '#/components/schemas/ScopedSetting'
+    FeatureList:
+      description: The flags.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: array
+                items: { $ref: '#/components/schemas/Feature' }
+    GroupList:
+      description: The groups, in order.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: array
+                items: { $ref: '#/components/schemas/Group' }
+    KeyOverrides:
+      description: The records and their values.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data, meta]
+            properties:
+              data:
+                type: array
+                items: { $ref: '#/components/schemas/KeyOverride' }
+              meta: { $ref: '#/components/schemas/PageMeta' }
+    ScopeView:
+      description: The record, and every setting and flag as it sees them.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data:
+                type: object
+                required: [scope, settings, features]
+                properties:
+                  scope: { $ref: '#/components/schemas/Record' }
+                  settings:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScopedSetting' }
+                  features:
+                    type: array
+                    items: { $ref: '#/components/schemas/ScopedFeature' }
+    CommandResult:
+      description: The command's exit code and output.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/CommandResult' }
+    Unauthenticated:
+      description: Your auth middleware rejected the request.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { message: Unauthenticated. }
+    Forbidden:
+      description: Not allowed to view, read-only for this user, or a locked setting.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Unknown key, scope type, record or history entry.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unprocessable:
+      description: Invalid input or value, or a change that cannot be made.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ValidationError' }
+
+  schemas:
+    Error:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+    ValidationError:
+      type: object
+      required: [message]
+      properties:
+        message: { type: string }
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items: { type: string }
+      example:
+        message: 'Setting [retention_days] is invalid: The value field must be at least 1.'
+        errors: { value: ['The value field must be at least 1.'] }
+
+    SettingType:
+      type: string
+      enum: [string, boolean, integer, float, array, json, object]
+    ScopeTypeAlias:
+      type: string
+      description: A scope type alias from `GET /scopes`, e.g. `user`.
+    RecordId:
+      type: [string, integer]
+      description: A record's key (integer, UUID or ULID).
+    Meta:
+      type: object
+      description: Free-form meta (`unit`, `min`, `max`, `options`, `help`, `tags`, `sensitive`, `readonly`, `input`, …). Always an object.
+      additionalProperties: true
+
+    Record:
+      type: object
+      description: A record that can override values (a user, company, branch…).
+      required: [type, class, id, label, description, state, trashed]
+      properties:
+        type: { type: [string, 'null'], description: 'The scope type alias; null for a model the API does not manage.' }
+        class: { type: string, example: App\Models\User }
+        id: { $ref: '#/components/schemas/RecordId' }
+        label: { type: string, example: Jane }
+        description: { type: [string, 'null'], example: jane@example.com }
+        state:
+          type: string
+          enum: [found, hidden, missing]
+          description: '`hidden`: it exists, but a global scope filters it out. `missing`: deleted.'
+        trashed: { type: boolean, description: 'Soft-deleted.' }
+    RecordWithCounts:
+      allOf:
+        - $ref: '#/components/schemas/Record'
+        - type: object
+          required: [settings, features]
+          properties:
+            settings: { type: integer, description: 'Setting overrides it stores.' }
+            features: { type: integer, description: 'Flag overrides it stores.' }
+    ScopeType:
+      type: object
+      required: [alias, class, name]
+      properties:
+        alias: { type: string, example: user }
+        class: { type: string, example: App\Models\User }
+        name: { type: string, example: User }
+
+    Setting:
+      type: object
+      required: [key, label, description, type, defined, stored, default, value, masked, source, sensitive, is_locked, readonly, group_id, sort_order, meta, definition_meta, stored_meta, override_count, scopes]
+      properties:
+        key: { type: string, example: retention_days }
+        label: { type: string, example: Retention Days }
+        description: { type: [string, 'null'] }
+        type: { $ref: '#/components/schemas/SettingType' }
+        defined: { type: boolean, description: 'Declared in code.' }
+        stored: { type: boolean, description: 'Has a global row in the database.' }
+        default: { description: 'The definition default (`null` for sensitive settings).' }
+        value: { description: 'The global value, or the default when not stored (`null` when masked).' }
+        masked: { type: boolean, description: 'The value is sensitive and not returned.' }
+        source: { type: string, enum: [global, default] }
+        sensitive: { type: boolean }
+        is_locked: { type: boolean }
+        readonly: { type: boolean, description: 'Locked or meta `readonly`; cannot be changed through the API.' }
+        group_id: { type: [integer, 'null'] }
+        sort_order: { type: integer }
+        meta: { $ref: '#/components/schemas/Meta' }
+        definition_meta: { $ref: '#/components/schemas/Meta' }
+        stored_meta:
+          oneOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: 'null'
+        override_count: { type: integer, description: 'Records that override it.' }
+        scopes:
+          type: array
+          items: { type: string }
+          description: Scope types allowed to override it (empty means any).
+    Feature:
+      type: object
+      required: [key, label, description, type, defined, stored, default, global, enabled, source, group_id, sort_order, meta, definition_meta, stored_meta, override_count, scopes]
+      properties:
+        key: { type: string, example: new_checkout }
+        label: { type: string }
+        description: { type: [string, 'null'] }
+        type: { type: string, const: boolean }
+        defined: { type: boolean }
+        stored: { type: boolean }
+        default: { type: boolean }
+        global: { type: [boolean, 'null'], description: 'The stored global state; null when not set.' }
+        enabled: { type: boolean, description: 'What everyone without an override gets.' }
+        source: { type: string, enum: [global, default] }
+        group_id: { type: [integer, 'null'] }
+        sort_order: { type: integer }
+        meta: { $ref: '#/components/schemas/Meta' }
+        definition_meta: { $ref: '#/components/schemas/Meta' }
+        stored_meta:
+          oneOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: 'null'
+        override_count: { type: integer }
+        scopes:
+          type: array
+          items: { type: string }
+
+    ChainLevel:
+      type: object
+      required: [level, scope, set, value]
+      properties:
+        level: { type: string, enum: [scope, global, default] }
+        scope:
+          oneOf:
+            - $ref: '#/components/schemas/Record'
+            - type: 'null'
+        set: { type: boolean, description: 'This level stores a value. The first level that does wins.' }
+        value: { description: 'The value stored at this level (null when not set or masked).' }
+    ResolvedFields:
+      type: object
+      description: 'How a record sees a key. For a deleted record (`missing: true`) nothing is resolved and `chain` is absent.'
+      required: [allowed, override, effective, source, source_scope]
+      properties:
+        allowed: { type: boolean, description: 'The definition''s scopes() allow this record''s type.' }
+        effective: { description: 'The value the record gets.' }
+        source: { type: string, enum: [scope, global, default, missing] }
+        source_scope:
+          oneOf:
+            - $ref: '#/components/schemas/Record'
+            - type: 'null'
+        chain:
+          type: array
+          items: { $ref: '#/components/schemas/ChainLevel' }
+          description: Every level the value is looked up in, most specific first.
+        missing: { type: boolean, const: true, description: 'Only on rows of a deleted record.' }
+    ScopedSetting:
+      allOf:
+        - $ref: '#/components/schemas/ResolvedFields'
+        - type: object
+          required: [key, label, description, type, default, sensitive, is_locked, readonly, group_id, sort_order, meta, overridden]
+          properties:
+            key: { type: string }
+            label: { type: string }
+            description: { type: [string, 'null'] }
+            type: { $ref: '#/components/schemas/SettingType' }
+            default: {}
+            sensitive: { type: boolean }
+            is_locked: { type: boolean }
+            readonly: { type: boolean }
+            group_id: { type: [integer, 'null'] }
+            sort_order: { type: integer }
+            meta: { $ref: '#/components/schemas/Meta' }
+            overridden: { type: boolean, description: 'The record stores its own value.' }
+            override: { description: 'The record''s own value (null when not overridden or masked).' }
+    ScopedFeature:
+      allOf:
+        - $ref: '#/components/schemas/ResolvedFields'
+        - type: object
+          required: [key, label, description, type, default, group_id, sort_order, meta]
+          properties:
+            key: { type: string }
+            label: { type: string }
+            description: { type: [string, 'null'] }
+            type: { type: string, const: boolean }
+            default: { type: boolean }
+            group_id: { type: [integer, 'null'] }
+            sort_order: { type: integer }
+            meta: { $ref: '#/components/schemas/Meta' }
+            override: { type: [boolean, 'null'], description: 'The record''s own state; null when it inherits.' }
+
+    KeyOverride:
+      type: object
+      required: [scope, value, updated_at]
+      properties:
+        scope: { $ref: '#/components/schemas/Record' }
+        value: { description: 'The record''s value (a boolean for flags; null when masked).' }
+        updated_at: { type: [string, 'null'], format: date-time }
+    PageMeta:
+      type: object
+      required: [page, per_page, total, last_page]
+      properties:
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+        last_page: { type: integer }
+
+    BulkResult:
+      type: object
+      required: [dry_run, matched, changed, unchanged, missing, not_allowed, records, feature]
+      properties:
+        dry_run: { type: boolean }
+        matched: { type: integer, description: 'Ids that are visible records the flag allows.' }
+        changed: { type: integer, description: 'Matched records whose state changes (or would).' }
+        unchanged: { type: integer, description: 'Matched records that already have the state.' }
+        missing:
+          type: array
+          items: { type: string }
+          description: Ids with no visible record.
+        not_allowed:
+          type: array
+          items: { type: string }
+          description: Records the flag's scopes() exclude.
+        records:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/Record' }
+          description: The first records that change.
+        feature: { $ref: '#/components/schemas/Feature' }
+
+    Group:
+      type: object
+      required: [id, name, slug, description, icon, sort_order, meta]
+      properties:
+        id: { type: integer }
+        name: { type: string, example: Billing }
+        slug: { type: string, example: billing }
+        description: { type: [string, 'null'] }
+        icon: { type: [string, 'null'] }
+        sort_order: { type: integer }
+        meta:
+          oneOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: 'null'
+    GroupWrite:
+      type: object
+      properties:
+        name: { type: string, maxLength: 255 }
+        slug: { type: [string, 'null'], maxLength: 255 }
+        description: { type: [string, 'null'] }
+        icon: { type: [string, 'null'], maxLength: 255 }
+        meta: { type: [object, 'null'] }
+    OrderKeys:
+      type: object
+      required: [group_id, keys]
+      properties:
+        group_id: { type: [integer, 'null'], description: 'The group; null for ungrouped.' }
+        keys:
+          type: array
+          items: { type: string }
+    MetaWrite:
+      type: object
+      required: [meta]
+      properties:
+        meta: { type: [object, 'null'], description: 'The new stored meta; null clears it.' }
+        merge: { type: boolean, default: false, description: 'Merge into the stored meta instead of replacing it.' }
+
+    Overview:
+      type: object
+      required: [settings, features, groups, scopes, most_overridden]
+      properties:
+        settings:
+          type: object
+          required: [total, stored, undefined, readonly, overridden]
+          properties:
+            total: { type: integer }
+            stored: { type: integer }
+            undefined: { type: integer, description: 'Stored without a definition.' }
+            readonly: { type: integer }
+            overridden: { type: integer, description: 'Settings with at least one override.' }
+        features:
+          type: object
+          required: [total, 'on', 'off', overridden]
+          properties:
+            total: { type: integer }
+            'on': { type: integer }
+            'off': { type: integer }
+            overridden: { type: integer }
+        groups: { type: integer }
+        scopes:
+          type: array
+          description: Overrides per scope type (model class).
+          items:
+            type: object
+            required: [type, class, name, records, settings, features]
+            properties:
+              type: { type: [string, 'null'] }
+              class: { type: string }
+              name: { type: string }
+              records: { type: integer }
+              settings: { type: integer }
+              features: { type: integer }
+        most_overridden:
+          type: array
+          items:
+            type: object
+            required: [kind, key, label, overrides]
+            properties:
+              kind: { type: string, enum: [setting, feature] }
+              key: { type: string }
+              label: { type: string }
+              overrides: { type: integer }
+
+    DriftReport:
+      type: object
+      required: [definitions, missing, missing_features, type_mismatch, stale, stale_features, flags_in_settings, missing_records, unknown_scope_types]
+      properties:
+        definitions: { type: integer }
+        missing:
+          type: array
+          description: Defined settings without a global row.
+          items:
+            type: object
+            required: [key, label]
+            properties: { key: { type: string }, label: { type: string } }
+        missing_features:
+          type: array
+          description: Defined flags without a flag row.
+          items:
+            type: object
+            required: [key, label]
+            properties: { key: { type: string }, label: { type: string } }
+        type_mismatch:
+          type: array
+          items:
+            type: object
+            required: [key, stored, defined]
+            properties:
+              key: { type: string }
+              stored: { $ref: '#/components/schemas/SettingType' }
+              defined: { $ref: '#/components/schemas/SettingType' }
+        stale:
+          type: array
+          description: Stored keys without a definition.
+          items: { type: string }
+        stale_features:
+          type: array
+          items: { type: string }
+        flags_in_settings:
+          type: array
+          description: Flags still stored as settings rows.
+          items: { type: string }
+        missing_records:
+          type: array
+          description: Overrides of records that were deleted.
+          items: { $ref: '#/components/schemas/RecordWithCounts' }
+        unknown_scope_types:
+          type: array
+          description: Overrides stored for models the API does not manage.
+          items:
+            type: object
+            required: [class, records, settings, features]
+            properties:
+              class: { type: string }
+              records: { type: integer }
+              settings: { type: integer }
+              features: { type: integer }
+
+    HistoryAction:
+      type: string
+      enum: [set, forget, meta, group, toggle]
+    HistoryEntry:
+      type: object
+      required: [id, key, action, scope, causer, old_value, new_value, old_meta, new_meta, kind, revertable, created_at]
+      properties:
+        id: { type: integer }
+        key: { type: string }
+        action: { $ref: '#/components/schemas/HistoryAction' }
+        scope:
+          description: The record the change was for; null for global.
+          oneOf:
+            - $ref: '#/components/schemas/Record'
+            - type: 'null'
+        causer:
+          description: Who made the change; null for the console or the system.
+          oneOf:
+            - $ref: '#/components/schemas/Record'
+            - type: 'null'
+        old_value: { type: [string, 'null'], description: 'Strings as they are, other values as JSON; flag states as "true", "false" or "inherit" (null on rows written before 3.1). Sensitive values are "********".' }
+        new_value: { type: [string, 'null'], description: 'Like old_value; null when a flag now inherits.' }
+        old_meta: { type: [object, 'null'] }
+        new_meta: { type: [object, 'null'] }
+        kind: { type: string, enum: [setting, feature] }
+        revertable: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    CommandResult:
+      type: object
+      required: [exit_code, output]
+      properties:
+        exit_code: { type: integer }
+        output: { type: string }
+    ExportFile:
+      type: object
+      description: The setanjo:export format.
+      required: [settings]
+      properties:
+        exported_at: { type: string, format: date-time }
+        settings: { type: array, items: { type: object } }
+        groups: { type: array, items: { type: object } }
+        features: { type: array, items: { type: object } }
+      additionalProperties: true
