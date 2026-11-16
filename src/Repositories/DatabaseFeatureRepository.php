@@ -161,6 +161,7 @@ class DatabaseFeatureRepository implements FeatureRepositoryInterface
         $feature = $this->findOrNew($key, $createWith);
         $feature->fill(array_intersect_key($attributes, array_flip([
             'name', 'description', 'group_id', 'sort_order', 'meta',
+            'enabled_from', 'enabled_until', 'rollout', 'requires', 'archived_at',
         ])));
         $feature->save();
 
@@ -256,6 +257,10 @@ class DatabaseFeatureRepository implements FeatureRepositoryInterface
      */
     protected function toRecord(Feature $feature): array
     {
+        // Until the 3.2 migration runs the rule columns do not exist. Read them only when loaded,
+        // so flags keep working in between (strict mode would throw on a missing attribute).
+        $rule = fn (string $column): mixed => array_key_exists($column, $feature->getAttributes()) ? $feature->getAttribute($column) : null;
+
         return [
             'id' => $feature->id,
             'enabled' => $feature->enabled,
@@ -264,6 +269,12 @@ class DatabaseFeatureRepository implements FeatureRepositoryInterface
             'group_id' => $feature->group_id,
             'sort_order' => (int) $feature->sort_order,
             'meta' => $feature->meta,
+            // Strings, not Carbon, so the cached record stays plain data.
+            'enabled_from' => $rule('enabled_from')?->toIso8601String(),
+            'enabled_until' => $rule('enabled_until')?->toIso8601String(),
+            'rollout' => $rule('rollout'),
+            'requires' => $rule('requires') ?? [],
+            'archived_at' => $rule('archived_at')?->toIso8601String(),
         ];
     }
 

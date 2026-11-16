@@ -18,6 +18,7 @@ use Ahs12\Setanjo\Features\PendingFeature;
 use Ahs12\Setanjo\Features\PendingFeatures;
 use Ahs12\Setanjo\Groups\GroupManager;
 use Ahs12\Setanjo\Support\ScopeResolver;
+use Ahs12\Setanjo\ValueObjects\FeatureRules;
 use Ahs12\Setanjo\ValueObjects\ResolvedValue;
 use BackedEnum;
 use Closure;
@@ -399,11 +400,30 @@ class SetanjoManager
     }
 
     /**
-     * Resolve a feature flag for a subject: closest scope override, then global state, then default.
+     * Resolve a feature flag for a subject: archive, closest scope override, global state or default, then the rules.
      */
     public function resolveFeature(string $key, ?Model $subject): ResolvedValue
     {
+        return $this->resolveFeatureFor($key, $subject, []);
+    }
+
+    /**
+     * Archived → off. A per-record override wins over every rule. Otherwise the global state (or
+     * the default) is the switch: when it is on, the schedule, the required flags and the rollout
+     * may each still turn it off for this subject.
+     *
+     * @param  array<string, true>  $visiting  flags being resolved up the `requires` path (cycle guard)
+     */
+    protected function resolveFeatureFor(string $key, ?Model $subject, array $visiting): ResolvedValue
+    {
         $definition = $this->definitions->get($key);
+        $flag = $this->features->flag($key);
+        $rules = FeatureRules::fromArray($flag);
+
+        if ($rules->isArchived()) {
+            return new ResolvedValue($key, false, ValueSource::ARCHIVED);
+        }
+
         $chain = $this->scopes->chain($subject, $definition?->scopes() ?? []);
 
         $this->features->loadOverrides($chain);
@@ -416,13 +436,45 @@ class SetanjoManager
             }
         }
 
-        $global = $this->features->flag($key)['enabled'] ?? null;
+        $global = $flag['enabled'] ?? null;
+        $base = $global === null
+            ? new ResolvedValue($key, (bool) ($definition?->default() ?? false), ValueSource::DEFAULT)
+            : new ResolvedValue($key, (bool) $global, ValueSource::GLOBAL);
 
-        if ($global !== null) {
-            return new ResolvedValue($key, (bool) $global, ValueSource::GLOBAL);
+        if ($base->value === false) {
+            return $base;
         }
 
-        return new ResolvedValue($key, (bool) ($definition?->default() ?? false), ValueSource::DEFAULT);
+        if (! $rules->inWindow()) {
+            return new ResolvedValue($key, false, ValueSource::SCHEDULE);
+        }
+
+        $visiting[$key] = true;
+
+        foreach ($rules->requires as $required) {
+            // A cycle cannot be satisfied: treat the flag that closes it as off.
+            if (isset($visiting[$required]) || ! $this->resolveFeatureFor($required, $subject, $visiting)->value) {
+                return new ResolvedValue($key, false, ValueSource::DEPENDENCY, detail: $required);
+            }
+        }
+
+        if ($rules->limitsRollout()) {
+            $bucket = $subject === null ? null : self::rolloutBucket($key, $subject);
+
+            // Without a subject there is no one to place in a bucket: only a 100% rollout is on.
+            return new ResolvedValue($key, $bucket !== null && $bucket < $rules->rollout, ValueSource::ROLLOUT, detail: $bucket);
+        }
+
+        return $base;
+    }
+
+    /**
+     * A record's stable place (0-99) in a flag's rollout. The flag key is part of the hash, so
+     * each flag picks a different slice of records; raising the percentage only adds records.
+     */
+    public static function rolloutBucket(string $key, Model $subject): int
+    {
+        return crc32($key.'|'.$subject->getMorphClass().':'.$subject->getKey()) % 100;
     }
 
     /**

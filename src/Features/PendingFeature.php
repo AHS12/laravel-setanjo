@@ -5,13 +5,17 @@ namespace Ahs12\Setanjo\Features;
 use Ahs12\Setanjo\Contracts\FeatureRepositoryInterface;
 use Ahs12\Setanjo\Contracts\SettingDefinition;
 use Ahs12\Setanjo\Definitions\DefinitionRegistry;
+use Ahs12\Setanjo\Events\FeatureRulesChanged;
 use Ahs12\Setanjo\Events\FeatureToggled;
 use Ahs12\Setanjo\Exceptions\InvalidSettingValueException;
 use Ahs12\Setanjo\Exceptions\UndefinedFeatureException;
 use Ahs12\Setanjo\SetanjoManager;
+use Ahs12\Setanjo\ValueObjects\FeatureRules;
 use Ahs12\Setanjo\ValueObjects\ResolvedValue;
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Arr;
+use Throwable;
 
 /**
  * Fluent access to one feature flag.
@@ -117,6 +121,100 @@ class PendingFeature
     }
 
     /**
+     * The flag's rules (schedule, rollout, required flags, archive). They belong to the flag, not to
+     * a scope: for() does not change what they apply to.
+     */
+    public function rules(): FeatureRules
+    {
+        return FeatureRules::fromArray($this->repository()->flag($this->key));
+    }
+
+    /**
+     * Keep the flag off before $from and from $until on (either may be null for an open end).
+     */
+    public function schedule(DateTimeInterface|string|null $from, DateTimeInterface|string|null $until = null): self
+    {
+        return $this->updateRules(['enabled_from' => $from, 'enabled_until' => $until]);
+    }
+
+    /**
+     * Give the flag to a share of records (0-100); null removes the limit.
+     */
+    public function rollout(?int $percent): self
+    {
+        return $this->updateRules(['rollout' => $percent]);
+    }
+
+    /**
+     * Flags that must be on (for the same subject) for this one to be on; null or [] removes them.
+     *
+     * @param  array<int, string>|string|null  $keys
+     */
+    public function requires(array|string|null $keys): self
+    {
+        return $this->updateRules(['requires' => $keys === null ? [] : (array) $keys]);
+    }
+
+    /**
+     * Hide the flag from the lists. An archived flag always reads as off; overrides and history stay.
+     */
+    public function archive(): self
+    {
+        return $this->archived() ? $this : $this->updateRules(['archived_at' => now()]);
+    }
+
+    public function restore(): self
+    {
+        return $this->updateRules(['archived_at' => null]);
+    }
+
+    public function archived(): bool
+    {
+        return $this->rules()->isArchived();
+    }
+
+    /**
+     * Change some rules at once. Keys: enabled_from, enabled_until, rollout, requires, archived_at.
+     *
+     * @param  array<string, mixed>  $changes
+     *
+     * @throws InvalidSettingValueException
+     */
+    public function updateRules(array $changes): self
+    {
+        $changes = array_intersect_key($changes, array_flip(['enabled_from', 'enabled_until', 'rollout', 'requires', 'archived_at']));
+
+        if (array_key_exists('requires', $changes)) {
+            $changes['requires'] = collect((array) $changes['requires'])
+                ->filter(fn ($required) => is_scalar($required) && trim((string) $required) !== '')
+                ->map(fn ($required) => trim((string) $required))
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        $old = $this->rules();
+
+        try {
+            $new = $old->with($changes);
+        } catch (Throwable) {
+            throw InvalidSettingValueException::invalidRule($this->key, 'enabled_from', 'The schedule must use valid dates.');
+        }
+
+        $this->validateRules($new);
+
+        if ($new->toArray() === $old->toArray()) {
+            return $this;
+        }
+
+        $this->repository()->updateAttributes($this->key, $new->toAttributes(), $this->manager->featureAttributes($this->definition()));
+
+        event(new FeatureRulesChanged($this->key, $old, $new));
+
+        return $this;
+    }
+
+    /**
      * Effective meta: definition meta merged with the meta stored on the flag row.
      */
     public function meta(?string $item = null, mixed $default = null): mixed
@@ -188,7 +286,58 @@ class PendingFeature
             'scope_id' => $resolved->scope?->getKey(),
             'override_count' => $this->repository()->overrideCounts()[$this->key] ?? 0,
             'meta' => $this->meta(),
+            'rules' => $this->rules()->toArray(),
         ];
+    }
+
+    /**
+     * @throws InvalidSettingValueException
+     */
+    protected function validateRules(FeatureRules $rules): void
+    {
+        if ($rules->rollout !== null && ($rules->rollout < 0 || $rules->rollout > 100)) {
+            throw InvalidSettingValueException::invalidRule($this->key, 'rollout', 'The rollout must be between 0 and 100.');
+        }
+
+        if ($rules->enabledFrom !== null && $rules->enabledUntil !== null && $rules->enabledUntil->lte($rules->enabledFrom)) {
+            throw InvalidSettingValueException::invalidRule($this->key, 'enabled_until', 'The end of the schedule must be after its start.');
+        }
+
+        foreach ($rules->requires as $required) {
+            if ($required === $this->key) {
+                throw InvalidSettingValueException::invalidRule($this->key, 'requires', 'A flag cannot require itself.');
+            }
+
+            if ($this->manager->definitions()->get($required)?->isFeature() !== true && $this->repository()->flag($required) === null) {
+                throw InvalidSettingValueException::invalidRule($this->key, 'requires', "There is no feature flag [{$required}].");
+            }
+
+            if ($this->leadsTo($required, $this->key)) {
+                throw InvalidSettingValueException::invalidRule($this->key, 'requires', "[{$required}] already requires [{$this->key}], directly or through other flags.");
+            }
+        }
+    }
+
+    /**
+     * Whether $from requires $target through stored `requires` rules.
+     *
+     * @param  array<string, true>  $seen
+     */
+    protected function leadsTo(string $from, string $target, array $seen = []): bool
+    {
+        if ($from === $target) {
+            return true;
+        }
+
+        $seen[$from] = true;
+
+        foreach ($this->repository()->flag($from)['requires'] ?? [] as $next) {
+            if (! isset($seen[$next]) && $this->leadsTo((string) $next, $target, $seen)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     protected function write(bool $state): self

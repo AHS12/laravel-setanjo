@@ -60,6 +60,7 @@ class SetanjoServiceProvider extends PackageServiceProvider
                 'add_v3_columns_to_setanjo_settings_table',
                 'create_setanjo_history_table',
                 'create_setanjo_features_tables',
+                'add_v3_2_columns_to_setanjo_features_table',
             ])
             ->hasCommands([
                 ClearCacheCommand::class,

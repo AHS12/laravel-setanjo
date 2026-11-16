@@ -129,6 +129,7 @@ it('matches real responses', function () {
     assertMatchesSchema($spec, 'Overview', $this->getJson('/api/setanjo/overview')->json('data'));
     assertMatchesSchema($spec, 'Setting', $this->getJson('/api/setanjo/settings')->json('data.0'));
     assertMatchesSchema($spec, 'Feature', $this->getJson('/api/setanjo/features')->json('data.0'));
+    assertMatchesSchema($spec, 'FeatureRules', $this->putJson('/api/setanjo/features/beta_feature/rules', ['rollout' => 50])->json('data.rules'));
     assertMatchesSchema($spec, 'Group', $this->getJson('/api/setanjo/groups')->json('data.0'));
     assertMatchesSchema($spec, 'ScopeType', $this->getJson('/api/setanjo/scopes')->json('data.0'));
     assertMatchesSchema($spec, 'RecordWithCounts', $this->getJson('/api/setanjo/scopes/user')->json('data.0'));

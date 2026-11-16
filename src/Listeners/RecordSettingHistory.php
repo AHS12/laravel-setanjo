@@ -3,6 +3,7 @@
 namespace Ahs12\Setanjo\Listeners;
 
 use Ahs12\Setanjo\Enums\HistoryAction;
+use Ahs12\Setanjo\Events\FeatureRulesChanged;
 use Ahs12\Setanjo\Events\FeatureToggled;
 use Ahs12\Setanjo\Events\SettingForgotten;
 use Ahs12\Setanjo\Events\SettingMetaUpdated;
@@ -30,6 +31,22 @@ class RecordSettingHistory
         $events->listen(SettingForgotten::class, [self::class, 'handleForgotten']);
         $events->listen(SettingMetaUpdated::class, [self::class, 'handleMetaUpdated']);
         $events->listen(FeatureToggled::class, [self::class, 'handleFeatureToggled']);
+        $events->listen(FeatureRulesChanged::class, [self::class, 'handleFeatureRulesChanged']);
+    }
+
+    /**
+     * The rules before and after go in old_meta / new_meta (FeatureRules::toArray() shape).
+     */
+    public function handleFeatureRulesChanged(FeatureRulesChanged $event): void
+    {
+        $old = $event->previous->toArray();
+        $new = $event->rules->toArray();
+
+        if ($old === $new) {
+            return;
+        }
+
+        $this->record($event->key, null, HistoryAction::RULES, oldMeta: $old, newMeta: $new);
     }
 
     public function handleFeatureToggled(FeatureToggled $event): void
