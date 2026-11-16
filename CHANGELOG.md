@@ -2,6 +2,42 @@
 
 All notable changes to `laravel-setanjo` will be documented in this file.
 
+## 3.2.0 - 2026-11-16
+
+### What's Changed
+
+##### Highlights
+
+3.2 adds **rules to feature flags**: turn a flag on and off on a schedule, roll it out to a percentage of records, make it depend on other flags, and archive flags you no longer use. The dashboard gets controls for all of them, plus new dropdowns and a date picker. One migration is needed, and it only adds empty columns: every existing flag keeps working as before. See [UPGRADE.md](https://github.com/AHS12/laravel-setanjo/blob/main/UPGRADE.md).
+
+##### What's New
+
+* **Flag rules.** Rules only turn an **on** flag off for some records. A flag is decided in this order:
+  
+  1. an archived flag is off everywhere
+  2. a record's own override wins
+  3. otherwise the global state (or default) must be on
+  4. then the schedule, required flags and rollout must all allow it
+  
+  ```php
+  Settings::feature('new_checkout')
+      ->enable()
+      ->schedule('2026-12-01 09:00', null)  // on from / off from (either may be null)
+      ->rollout(25)                         // 25% of records; null for everyone
+      ->requires(['new_cart']);             // off unless new_cart is on too
+  
+  Settings::feature('old_flow')->archive(); // ->restore()
+  
+  ```
+* v3.2: flag rules (schedule, rollout, requires, archive) and dashboard controls by @AHS12 in https://github.com/AHS12/laravel-setanjo/pull/30
+  
+* Fix: read flags before the 3.2 migration has run by @AHS12 in https://github.com/AHS12/laravel-setanjo/pull/31
+  
+* RC 3.2.0 by @AHS12 in https://github.com/AHS12/laravel-setanjo/pull/32
+  
+
+**Full Changelog**: https://github.com/AHS12/laravel-setanjo/compare/3.1.0...3.2.0
+
 ## 2.0.0 - 2026-09-23
 
 ### What's Changed
