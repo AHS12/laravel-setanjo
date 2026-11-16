@@ -19,6 +19,9 @@ class RecordSettingHistory
 {
     public const MASK = '********';
 
+    /** old_value of a toggle row when the scope inherited before the change. */
+    public const INHERIT = 'inherit';
+
     public function __construct(protected SetanjoManager $setanjo) {}
 
     public function subscribe(Dispatcher $events): void
@@ -31,23 +34,39 @@ class RecordSettingHistory
 
     public function handleFeatureToggled(FeatureToggled $event): void
     {
+        if ($event->previous === $event->state) {
+            return; // nothing changed
+        }
+
         $this->record(
             $event->key,
             $event->scope,
             HistoryAction::TOGGLE,
-            newValue: $event->state === null ? null : ($event->state ? 'true' : 'false'),
+            // 'inherit' (not null) so a revert knows the state; rows written before 3.1 have null here.
+            oldValue: self::state($event->previous) ?? self::INHERIT,
+            newValue: self::state($event->state),
         );
     }
 
     public function handleUpdated(SettingUpdated $event): void
     {
-        $this->record(
-            $event->key,
-            $event->scope,
-            HistoryAction::SET,
-            oldValue: $this->serialize($event->key, $event->oldValue),
-            newValue: $this->serialize($event->key, $event->newValue),
-        );
+        $old = $this->serialize($event->key, $event->oldValue);
+        $new = $this->serialize($event->key, $event->newValue);
+
+        // Saving the same value again is not a change. Masked values cannot be compared, so they are kept.
+        if ($old === $new && $new !== self::MASK) {
+            return;
+        }
+
+        $this->record($event->key, $event->scope, HistoryAction::SET, oldValue: $old, newValue: $new);
+    }
+
+    /**
+     * A flag state as stored in history: 'true', 'false', or null for inherit.
+     */
+    public static function state(?bool $state): ?string
+    {
+        return $state === null ? null : ($state ? 'true' : 'false');
     }
 
     public function handleForgotten(SettingForgotten $event): void
@@ -62,6 +81,10 @@ class RecordSettingHistory
 
     public function handleMetaUpdated(SettingMetaUpdated $event): void
     {
+        if (($event->oldMeta ?: null) == ($event->newMeta ?: null)) {
+            return;
+        }
+
         $this->record($event->key, $event->scope, HistoryAction::META, oldMeta: $event->oldMeta, newMeta: $event->newMeta);
     }
 

@@ -1,5 +1,7 @@
 <?php
 
+use Ahs12\Setanjo\Http\Middleware\Authorize;
+
 return [
     /*
     |--------------------------------------------------------------------------
@@ -179,6 +181,95 @@ return [
     'history' => [
         'enabled' => env('SETANJO_HISTORY_ENABLED', false),
         'table' => env('SETANJO_HISTORY_TABLE', 'setanjo_history'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dashboard
+    |--------------------------------------------------------------------------
+    |
+    | A web UI for settings, groups, feature flags and overrides, mounted at
+    | {domain}/{path}.
+    |
+    | middleware: every dashboard route (page and JSON API) runs through it.
+    |   Authorize allows the local environment, else the `viewSetanjo` gate or
+    |   Setanjo::auth(). Add your own middleware, or replace Authorize with it:
+    |     ['web', 'auth', Authorize::class]       your auth + the gate
+    |     ['web', 'auth', 'role:Super Admin']     your middleware decides
+    |
+    | require_auth: when Authorize is not in the list, outside the local
+    |   environment someone must be signed in, so ['web'] alone is never public.
+    |   Set false only if something else protects the path (VPN, proxy auth).
+    |
+    | readonly: show everything, allow no changes. Writes also need
+    |   Setanjo::manage() or the `manageSetanjo` gate when you define them;
+    |   both are always checked, whatever the middleware list.
+    |
+    | brand: title, logo URL and accent colour (hex, e.g. '#0ea5e9') so the
+    |   dashboard looks like part of your app. home: the link behind the
+    |   "Back to app" item (null hides it).
+    |
+    */
+    'dashboard' => [
+        'enabled' => env('SETANJO_DASHBOARD_ENABLED', true),
+        'path' => env('SETANJO_DASHBOARD_PATH', 'setanjo'),
+        'domain' => env('SETANJO_DASHBOARD_DOMAIN'),
+        'middleware' => ['web', Authorize::class],
+        'require_auth' => env('SETANJO_DASHBOARD_REQUIRE_AUTH', true),
+        'readonly' => env('SETANJO_DASHBOARD_READONLY', false),
+        'brand' => [
+            'title' => env('SETANJO_DASHBOARD_TITLE', 'Setanjo'),
+            'logo' => null,
+            'color' => null,
+        ],
+        'home' => '/',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | HTTP API
+    |--------------------------------------------------------------------------
+    |
+    | Everything the dashboard does, as a JSON API for your own admin UI,
+    | scripts or other services. Off by default. It works without the
+    | dashboard (dashboard.enabled can be false). Every endpoint:
+    | https://github.com/AHS12/laravel-setanjo/blob/main/docs/API.md
+    |
+    | middleware: like the dashboard's list, but for API clients. Add the
+    |   auth your clients use; Authorize then checks the `viewSetanjo` gate:
+    |     ['api', 'auth:sanctum', Authorize::class]
+    |     ['api', 'auth:sanctum', 'can:manage-settings']  your rule alone decides
+    |   dashboard.require_auth, dashboard.readonly and the manage rules
+    |   (Setanjo::manage() / `manageSetanjo`) apply here too.
+    |
+    */
+    'api' => [
+        'enabled' => env('SETANJO_API_ENABLED', false),
+        'prefix' => env('SETANJO_API_PREFIX', 'api/setanjo'),
+        'domain' => env('SETANJO_API_DOMAIN'),
+        'middleware' => ['api', Authorize::class],
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Dashboard Scopes
+    |--------------------------------------------------------------------------
+    |
+    | Models the dashboard can set overrides for, keyed by model class.
+    | Empty = the tenant models from tenancy_mode. Without `label`/`search`, the
+    | first of name, title, label, email, slug, code the table has is used.
+    |
+    |   App\Models\User::class => [
+    |       'label' => 'name',                     // column or fn ($model) => ...
+    |       'search' => ['name', 'email'],         // columns searched with LIKE
+    |       'description' => fn ($user) => $user->email,
+    |       'without_scopes' => true,              // ignore global scopes (tenant, branch)
+    |   ],
+    |   App\Models\Branch::class => ['without_scopes' => true],
+    |
+    */
+    'scopes' => [
+        //
     ],
 
     /*

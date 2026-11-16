@@ -18,3 +18,10 @@
 /UPGRADING.md       export-ignore
 /phpstan.neon.dist  export-ignore
 /phpstan-baseline.neon  export-ignore
+
+# Dashboard: ship the built assets, not their sources or the build tooling.
+/resources/js       export-ignore
+/resources/css      export-ignore
+/package.json       export-ignore
+/package-lock.json  export-ignore
+/dist/**            linguist-generated=true -diff eol=lf

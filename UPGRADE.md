@@ -1,5 +1,34 @@
 # Upgrade Guide
 
+## From 3.0 to 3.1
+
+No migrations and no code changes. 3.1 adds a dashboard at `/setanjo`, open in the `local`
+environment only. To use it elsewhere, define a `viewSetanjo` gate (see the README). To turn it
+off, set `SETANJO_DASHBOARD_ENABLED=false`; no routes are registered then.
+
+If you published `config/setanjo.php`, add the `dashboard` and `scopes` keys from the package
+config to change the defaults. Keep `Authorize::class` in `dashboard.middleware` to use the
+`viewSetanjo` gate, or replace it with your own middleware (`['web', 'auth', 'role:admin']`).
+Read-only mode and the `manageSetanjo` gate apply either way.
+
+If the app already has a route at `/setanjo`, move the dashboard with `SETANJO_DASHBOARD_PATH`.
+The optional `dashboard.brand` (title, logo, accent colour) and `dashboard.home` keys change how
+it looks; the defaults apply without them.
+
+3.1 also adds an HTTP API with the same endpoints
+([docs/API.md](https://github.com/AHS12/laravel-setanjo/blob/main/docs/API.md)). It is off until you set
+`SETANJO_API_ENABLED=true`; add the `api` block from the package config to choose its prefix
+and middleware.
+
+Two small behaviour changes in history (only when `history.enabled`):
+
+- Saving the value a key already has (or the same meta, or a flag state it already has) no longer
+  writes a history row.
+- `FeatureToggled` has a new `previous` property (the explicit state before the change), and
+  toggle rows now store it in `old_value` (`'true'`, `'false'` or `'inherit'`). Toggle rows written
+  before 3.1 keep `null` there and cannot be reverted from the dashboard. Code that dispatches the
+  event itself keeps working: the argument is optional.
+
 ## From 2.x to 3.0
 
 v3 is additive: the 2.x API (`Settings::get/set/has/forget/all/flush/for/forTenantId`,

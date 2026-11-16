@@ -10,8 +10,12 @@ use Ahs12\Setanjo\Commands\MigrateFeatureFlagsCommand;
 use Ahs12\Setanjo\Commands\SyncCommand;
 use Ahs12\Setanjo\Contracts\FeatureRepositoryInterface;
 use Ahs12\Setanjo\Contracts\SettingsRepositoryInterface;
+use Ahs12\Setanjo\Dashboard\ScopeRegistry;
 use Ahs12\Setanjo\Definitions\DefinitionRegistry;
+use Ahs12\Setanjo\Http\Middleware\AcceptJson;
+use Ahs12\Setanjo\Http\Middleware\Authorize;
 use Ahs12\Setanjo\Http\Middleware\EnsureFeatureEnabled;
+use Ahs12\Setanjo\Http\Middleware\GuardDashboard;
 use Ahs12\Setanjo\Listeners\RecordSettingHistory;
 use Ahs12\Setanjo\Repositories\DatabaseFeatureRepository;
 use Ahs12\Setanjo\Repositories\DatabaseSettingsRepository;
@@ -23,6 +27,7 @@ use Illuminate\Routing\Router;
 use Illuminate\Support\Facades\Blade;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Route;
 use InvalidArgumentException;
 use Spatie\LaravelPackageTools\Commands\InstallCommand;
 use Spatie\LaravelPackageTools\Package;
@@ -48,6 +53,7 @@ class SetanjoServiceProvider extends PackageServiceProvider
             ->name('setanjo')
             ->hasConfigFile('setanjo')
             ->hasTranslations()
+            ->hasViews('setanjo')
             ->hasMigrations([
                 'create_setanjo_settings_table',
                 'create_setanjo_groups_table',
@@ -76,6 +82,8 @@ class SetanjoServiceProvider extends PackageServiceProvider
         $this->app->singleton(DefinitionRegistry::class);
         $this->app->singleton(ScopeResolver::class);
         $this->app->singleton(SettingsCache::class);
+        // Scoped: the dashboard's controllers and Catalog share one registry (and its ghosts) per request.
+        $this->app->scoped(ScopeRegistry::class);
 
         $this->app->singleton(SettingsRepositoryInterface::class, function ($app) {
             $driver = config('setanjo.repository', 'database');
@@ -109,6 +117,8 @@ class SetanjoServiceProvider extends PackageServiceProvider
         $this->registerGate();
         $this->registerHistory();
         $this->registerStateReset();
+        $this->registerDashboard();
+        $this->registerApi();
     }
 
     protected function registerMiddleware(): void
@@ -161,6 +171,44 @@ class SetanjoServiceProvider extends PackageServiceProvider
                     $this->app->make($repository)->reset();
                 }
             }
+        });
+    }
+
+    protected function registerDashboard(): void
+    {
+        if (! config('setanjo.dashboard.enabled', true)) {
+            return;
+        }
+
+        Route::group([
+            'domain' => config('setanjo.dashboard.domain'),
+            'prefix' => trim((string) config('setanjo.dashboard.path', 'setanjo'), '/'),
+            // The app's stack (Authorize included by default), then the guard that cannot be configured away.
+            'middleware' => [...(array) config('setanjo.dashboard.middleware', ['web', Authorize::class]), GuardDashboard::class],
+            'as' => 'setanjo.',
+        ], function () {
+            $this->loadRoutesFrom(__DIR__.'/../routes/dashboard.php');
+        });
+    }
+
+    /**
+     * The public HTTP API: the dashboard's endpoints for your own UI, scripts or other services,
+     * behind `setanjo.api.middleware` (token auth friendly, no session or CSRF). Off by default.
+     */
+    protected function registerApi(): void
+    {
+        if (! config('setanjo.api.enabled', false)) {
+            return;
+        }
+
+        Route::group([
+            'domain' => config('setanjo.api.domain'),
+            'prefix' => trim((string) config('setanjo.api.prefix', 'api/setanjo'), '/'),
+            // JSON answers always, then the app's stack, then the same guard as the dashboard.
+            'middleware' => [AcceptJson::class, ...(array) config('setanjo.api.middleware', ['api', Authorize::class]), GuardDashboard::class],
+            'as' => 'setanjo.http.',
+        ], function () {
+            $this->loadRoutesFrom(__DIR__.'/../routes/api.php');
         });
     }
 }

@@ -28,6 +28,8 @@ A powerful Laravel package for managing application settings and configurations.
 -   🗂️ **Groups & Ordering**: Group settings and order groups and settings (drag-and-drop ready)
 -   🔄 **Sync, Export, Import**: Keep the database in line with code; move settings between environments
 -   📣 **Events & History**: Hook audit logging into events, or let the package record history
+-   🖥️ **Dashboard**: A built-in UI for settings, groups, flags, overrides, drift, history and import/export
+-   🔌 **HTTP API**: Everything the dashboard does, as a JSON API for your own admin UI or services
 
 ## Requirements
 - PHP 8.4 or higher
@@ -389,7 +391,183 @@ Events: `SettingUpdated`, `SettingForgotten`, `SettingMetaUpdated`, `SettingsFlu
 to clear other caches.
 
 Set `history.enabled` to `true` to record every change (value, meta, scope, causer) in
-`setanjo_history`. Values of settings with meta `sensitive => true` are masked.
+`setanjo_history`. Saving the value a key already has is not recorded. Flag changes store the
+previous state too (`FeatureToggled::$previous`), so the dashboard can revert them. Values of
+settings with meta `sensitive => true` are masked.
+
+## Dashboard
+
+Setanjo ships a web UI at `/setanjo`. Host apps need no Livewire, Vue or Node: the page
+inlines its prebuilt assets, so nothing has to be published and `composer update` never
+leaves stale assets behind.
+
+| Screen | What you can do |
+| --- | --- |
+| Overview | Counts of settings, flags (on/off), overrides per scope type and drift issues; the latest changes; the most overridden keys |
+| Settings | Edit values with editors chosen by type and meta (toggle, number + unit, select, JSON with validation, color picker, secrets); drag to reorder settings, move them between groups and reorder groups; reset to default |
+| Feature flags | Set each flag's global state (default / on / off); see override counts |
+| Setting / flag detail | Click any key: its value, every record that overrides it (newest first, by type), its recent changes with Revert, and copyable code (`Settings::get(...)`, `@feature(...)`, the route middleware). Each key has its own link (`#/flags/new_checkout`) to share |
+| Flag targeting | From the flag's detail: search records of any scope type and turn the flag on or off for them, or paste up to 1000 ids, preview what changes, then apply |
+| Overrides | Pick a record of any configured scope type, then set or remove its flag and setting overrides; every row shows the full resolution chain (`Jane: not set › Acme Ltd: "daily" › Global: "weekly"`) and which level wins |
+| Groups | Create, edit, delete and reorder groups |
+| Meta | Edit the meta stored for a setting or flag next to the meta declared in code (key/value or raw JSON) |
+| Drift | Compare definitions with the database; preview `setanjo:sync`, then run it |
+| History | Changes grouped by day with readable diffs (JSON keys added/removed/changed), filters by key, action and scope, and **Revert** (when `history.enabled`) |
+| Import / export | Download a `setanjo:export` file; check and import one |
+
+Working faster:
+
+- **Search everything** with <kbd>Ctrl</kbd>/<kbd>⌘</kbd> <kbd>K</kbd>: settings, flags, groups, records of every
+  scope type, and actions such as "Turn off beta_reports". <kbd>/</kbd> focuses the search of the
+  current screen, <kbd>g</kbd> then a letter switches screens, <kbd>?</kbd> lists every shortcut.
+- **Undo** on every save, reset and flag toggle (from the message that confirms it).
+- **Unsaved edits** are marked; <kbd>Enter</kbd> saves (<kbd>Ctrl</kbd> <kbd>Enter</kbd> for JSON),
+  <kbd>Esc</kbd> undoes the typing, and leaving the screen asks before dropping them.
+- Light, dark or system theme; top navigation that turns into a menu on small screens.
+
+Locked settings (`is_locked`) and settings with meta `readonly => true` cannot be changed from
+the dashboard. Values with meta `sensitive => true` are never sent to the browser, and their
+changes cannot be reverted from history (the old value is not stored).
+
+### Access
+
+Every dashboard route (the page and its JSON API) runs through `setanjo.dashboard.middleware`,
+the same way Telescope and Pulse work:
+
+```php
+use Ahs12\Setanjo\Http\Middleware\Authorize;
+
+'middleware' => ['web', Authorize::class],
+```
+
+**`Authorize`** (the default) lets the dashboard open in the `local` environment only. Elsewhere,
+define a gate:
+
+```php
+// AppServiceProvider::boot()
+Gate::define('viewSetanjo', fn (User $user) => $user->isAdmin());
+```
+
+or take full control with a callback, which wins over the gate and the environment:
+
+```php
+use Ahs12\Setanjo\Setanjo;
+
+Setanjo::auth(fn (Request $request) => $request->user()?->isAdmin() ?? false);
+```
+
+**Your own middleware.** Add middleware to the list, or replace `Authorize` with it:
+
+```php
+'middleware' => ['web', 'auth', Authorize::class],        // your login + the viewSetanjo gate
+'middleware' => ['web', 'auth', 'role:Super Admin'],      // your middleware alone decides
+'middleware' => ['web', 'auth.basic', 'can:manage-settings'],
+```
+
+**Never public by accident.** Without `Authorize` in the list, outside the `local` environment
+someone must be signed in, so `['web']` alone answers 403. Set `require_auth` to `false` only when
+something else protects the path (a VPN, an IP allow-list or auth at the proxy).
+
+**Changes** are always checked, whatever the list: nothing in `readonly` mode, otherwise
+`Setanjo::manage()` when set, else the `manageSetanjo` gate when defined, else whoever may view.
+
+```php
+Gate::define('manageSetanjo', fn (User $user) => $user->isSuperAdmin());
+// or
+Setanjo::manage(fn (Request $request) => $request->user()?->isSuperAdmin() ?? false);
+```
+
+**Token-only APIs (Sanctum bearer tokens).** A browser opening `/setanjo` does not send the API
+token, so `auth:sanctum` cannot protect the page. Use a browser-friendly login instead, for
+example `['web', 'auth.basic:web', 'role:Super Admin,web']` (HTTP Basic against the `web` guard),
+a session login page, or a middleware of your own such as an IP allow-list.
+
+### Configuration
+
+```php
+'dashboard' => [
+    'enabled' => env('SETANJO_DASHBOARD_ENABLED', true),   // false: no routes at all
+    'path' => env('SETANJO_DASHBOARD_PATH', 'setanjo'),
+    'domain' => env('SETANJO_DASHBOARD_DOMAIN'),
+    'middleware' => ['web', Authorize::class],               // see Access
+    'require_auth' => env('SETANJO_DASHBOARD_REQUIRE_AUTH', true),
+    'readonly' => env('SETANJO_DASHBOARD_READONLY', false),  // view only, for everyone
+    'brand' => [
+        'title' => env('SETANJO_DASHBOARD_TITLE', 'Setanjo'),
+        'logo' => null,                                      // URL or path, e.g. '/img/logo.svg'
+        'color' => null,                                     // accent colour, hex: '#0ea5e9'
+    ],
+    'home' => '/',                                           // "Back to app" link (null hides it)
+],
+
+// Models the Overrides screen can manage. Empty = the tenant models from tenancy_mode.
+'scopes' => [
+    App\Models\User::class => [
+        'label' => 'name',                              // column or fn ($user) => ...
+        'search' => ['name', 'email'],                  // columns searched with LIKE
+        'description' => fn ($user) => $user->email,
+        'without_scopes' => true,                       // ignore global scopes (tenant, branch)
+    ],
+    App\Models\Branch::class => ['search' => ['title', 'code']],
+],
+```
+
+Any model can be a scope, not just users. On the Overrides screen you pick the type (User,
+Company, Branch…), find a record and set overrides for it; inherited values show where they
+come from. Things to know:
+
+- **Label and search columns.** Without `label`/`search`, the first of `name`, `title`, `label`,
+  `email`, `slug`, `code` the table has is used, and records without one show as `Branch #12`.
+  Pasting an id always works: digits for integer keys, a valid UUID/ULID for `HasUuids`/`HasUlids`.
+- **Global scopes.** The dashboard queries models with their global scopes applied. If a tenant or
+  branch scope (one that reads the logged-in user) would hide records from the admin using the
+  dashboard, set `'without_scopes' => true` for that type. Opening a hidden record says so.
+- **Soft deletes.** Soft-deleted records still open (marked *trashed*); their overrides apply
+  again if they are restored. They are left out of search.
+- **Deleted records.** Overrides of a record that was deleted are listed as *deleted*. Opening it
+  shows only what is stored, which can be cleared one by one or with **Clear all overrides**. The
+  Drift screen lists them, and overrides stored for models the dashboard does not know.
+- **UUID/ULID scope models.** Reading and browsing them works with the default integer id
+  columns (nothing can be stored for them there, so the lookups are skipped, which also keeps
+  Postgres from rejecting the comparison). To *store* overrides for them, the scope id columns
+  must hold their keys: `Schema::morphUsingUuids()` (or `morphUsingUlids()`) before the setanjo
+  migrations run when every scope model uses them, or string id columns when integer and UUID
+  models are mixed.
+
+The page uses the app's CSP nonce when one is set with `Vite::useCspNonce()`. Alpine.js needs
+`'unsafe-eval'` in `script-src`.
+
+The UI talks to a JSON API under `/setanjo/api` (same middleware and access rules). Every write
+goes through the package API, so validation, events, history and cache invalidation behave
+exactly as in code.
+
+## HTTP API
+
+Build your own screens on top of Setanjo: every dashboard action is also a JSON API (read and
+change settings and flags, per-record overrides and bulk targeting, groups, drift and sync,
+history and revert, import and export). It is off by default:
+
+```dotenv
+SETANJO_API_ENABLED=true
+```
+
+```php
+'api' => [
+    'enabled' => env('SETANJO_API_ENABLED', false),
+    'prefix' => env('SETANJO_API_PREFIX', 'api/setanjo'),
+    'domain' => env('SETANJO_API_DOMAIN'),
+    // Default ['api', Authorize::class]: local only, or the viewSetanjo gate. Add your clients' auth:
+    'middleware' => ['api', 'auth:sanctum', Authorize::class],
+],
+```
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "https://app.test/api/setanjo/features/new_checkout?scope_type=user&scope_id=42"
+```
+
+It needs no session or CSRF token, always answers JSON, and works with the dashboard turned
+off. Read-only mode and the `manageSetanjo` / `Setanjo::manage()` rules apply to it as well.
+Every endpoint, with request and response examples: [docs/API.md](docs/API.md).
 
 ## Commands
 
