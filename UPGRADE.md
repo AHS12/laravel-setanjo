@@ -1,5 +1,29 @@
 # Upgrade Guide
 
+## From 3.1 to 3.2
+
+Publish and run the new migration. It only adds nullable columns to `setanjo_features`
+(`enabled_from`, `enabled_until`, `rollout`, `requires`, `archived_at`), so every flag keeps
+working as before:
+
+```bash
+php artisan vendor:publish --tag="setanjo-migrations"
+php artisan migrate
+```
+
+No code changes. Things to know:
+
+- Flag reads now load the flag rows before the overrides (an archived flag is off whatever its
+  overrides say). With the cache on this costs nothing; without it, a cold read is one query more.
+- `ValueSource` has four new cases for flags (`ARCHIVED`, `SCHEDULE`, `DEPENDENCY`, `ROLLOUT`).
+  A `match` over it without a `default` arm needs them.
+- `ResolvedValue` has a new optional `detail` property; `toArray()` includes it.
+- History has a new action, `rules`, with the rules before and after in `old_meta` / `new_meta`.
+- `setanjo:export` writes each flag's `rules`; `setanjo:import` restores them. Files exported
+  before 3.2 have no rules and leave the stored ones as they are.
+- Custom `FeatureRepositoryInterface` implementations should store and return the new fields
+  (see the interface's doc comments); without them every flag simply has no rules.
+
 ## From 3.0 to 3.1
 
 No migrations and no code changes. 3.1 adds a dashboard at `/setanjo`, open in the `local`

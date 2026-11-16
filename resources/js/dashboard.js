@@ -1,4 +1,5 @@
 import Alpine from 'alpinejs';
+import { registerControls } from './controls.js';
 import Sortable from 'sortablejs';
 
 const config = JSON.parse(document.getElementById('setanjo-config').textContent);
@@ -163,6 +164,51 @@ function ago(value) {
 }
 
 const exact = (value) => (value ? new Date(value).toLocaleString() : '');
+
+const pad = (number) => String(number).padStart(2, '0');
+
+/** ISO time → the value of a datetime-local input (the browser's timezone). */
+function toLocalInput(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+const fromLocalInput = (value) => (value ? new Date(value).toISOString() : null);
+
+const rolloutValue = (value) => (value === '' || value === null || value === undefined ? null : Number(value));
+
+/** Whether a flag's rules narrow who gets it (an on flag may still be off for some records). */
+const limited = (row) => (row.rules?.rollout ?? 100) < 100 || (row.rules?.requires ?? []).length > 0 || row.window === 'open';
+
+/** Short badges for a flag's rules, for the list and the drawer. */
+function ruleBadges(row) {
+    const rules = row.rules ?? {};
+    const badges = [];
+    if (row.archived) badges.push({ text: 'archived', title: `Archived ${exact(rules.archived_at)}`, warn: true });
+    if (row.window === 'pending') badges.push({ text: `starts ${ago(rules.enabled_from)}`, title: `Off until ${exact(rules.enabled_from)}`, warn: true });
+    if (row.window === 'open' && rules.enabled_until) badges.push({ text: `ends ${ago(rules.enabled_until)}`, title: `Off from ${exact(rules.enabled_until)}` });
+    if (row.window === 'ended') badges.push({ text: 'schedule ended', title: `Off since ${exact(rules.enabled_until)}`, warn: true });
+    if ((rules.rollout ?? 100) < 100) badges.push({ text: `${rules.rollout}% rollout`, title: `On for ${rules.rollout}% of records` });
+    if ((rules.requires ?? []).length > 0) badges.push({ text: `needs ${rules.requires.join(', ')}`, title: 'Off unless these flags are on too' });
+    return badges;
+}
+
+/** Why a rule (not an override or the global state) decided a record's state. */
+function ruleText(row) {
+    switch (row.source) {
+        case 'archived':
+            return 'Off: the flag is archived';
+        case 'schedule':
+            return 'Off: outside its schedule';
+        case 'dependency':
+            return `Off: needs ${row.detail} on`;
+        case 'rollout':
+            return row.effective ? `On: in the ${row.rules?.rollout}% rollout` : `Off: not in the ${row.rules?.rollout}% rollout`;
+        default:
+            return '';
+    }
+}
 
 function dayLabel(value) {
     const date = new Date(value);
@@ -413,6 +459,7 @@ document.addEventListener('alpine:init', () => {
         groups: [],
         settings: null,
         features: null,
+        archived: null,
         driftCount: null,
         toasts: [],
         meta: { open: false },
@@ -508,6 +555,11 @@ document.addEventListener('alpine:init', () => {
             return this.features;
         },
 
+        async loadArchived() {
+            this.archived = (await api('GET', '/features?archived=1')).data;
+            return this.archived;
+        },
+
         /** Load the setting and flag lists once (palette, drawer); views refresh them themselves. */
         async ensureCatalog() {
             await Promise.all([this.settings ? null : this.loadSettings(), this.features ? null : this.loadFeatures()]);
@@ -522,19 +574,23 @@ document.addEventListener('alpine:init', () => {
         },
 
         row(kind, key) {
-            return (kind === 'feature' ? this.features : this.settings)?.find((row) => row.key === key) ?? null;
+            const find = (list) => list?.find((row) => row.key === key) ?? null;
+            return kind === 'feature' ? find(this.features) ?? find(this.archived) : find(this.settings);
         },
 
-        /** Put an updated row into the cached list (null removes the key). */
+        /** Put an updated row into the cached list it belongs to (null removes the key). */
         setRow(kind, row, key = row?.key) {
-            const list = kind === 'feature' ? 'features' : 'settings';
-            if (!this[list]) return;
-            if (!row) {
-                this[list] = this[list].filter((item) => item.key !== key);
-            } else if (this[list].some((item) => item.key === row.key)) {
-                this[list] = this[list].map((item) => (item.key === row.key ? row : item));
-            } else {
-                this[list] = [...this[list], row];
+            const lists = kind === 'feature' ? ['features', 'archived'] : ['settings'];
+            const target = !row ? null : kind !== 'feature' ? 'settings' : row.archived ? 'archived' : 'features';
+            for (const list of lists) {
+                if (!this[list]) continue;
+                if (list !== target) {
+                    this[list] = this[list].filter((item) => item.key !== key);
+                } else if (this[list].some((item) => item.key === row.key)) {
+                    this[list] = this[list].map((item) => (item.key === row.key ? row : item));
+                } else {
+                    this[list] = [...this[list], row];
+                }
             }
         },
 
@@ -558,6 +614,31 @@ document.addEventListener('alpine:init', () => {
             if (undoable) {
                 this.toast(`${row.label}: ${stateText(state)}`, 'success', {
                     undo: () => this.setFeature(data, previous, { undoable: false }),
+                });
+            }
+            return data;
+        },
+
+        /** Change a flag's schedule, rollout or required flags, with an Undo on the toast. */
+        async saveRules(row, changes, { undoable = true } = {}) {
+            const previous = row.rules ?? {};
+            const { data } = await api('PUT', `/features/${enc(row.key)}/rules`, changes);
+            this.setRow('feature', data, row.key);
+            if (undoable) {
+                const back = Object.fromEntries(Object.keys(changes).map((name) => [name, previous[name] ?? null]));
+                this.toast(`${row.label}: rules saved`, 'success', { undo: () => this.saveRules(data, back, { undoable: false }) });
+            }
+            return data;
+        },
+
+        async archiveFeature(row, archived, { undoable = true } = {}) {
+            const { data } = await api('POST', `/features/${enc(row.key)}/${archived ? 'archive' : 'restore'}`);
+            // The row moves between the two lists: both must be loaded or it would vanish.
+            await Promise.all([this.features ?? this.loadFeatures(), this.archived ?? this.loadArchived()]);
+            this.setRow('feature', data, row.key);
+            if (undoable) {
+                this.toast(`${row.label}: ${archived ? 'archived' : 'restored'}`, 'success', {
+                    undo: () => this.archiveFeature(data, !archived, { undoable: false }),
                 });
             }
             return data;
@@ -1050,9 +1131,35 @@ document.addEventListener('alpine:init', () => {
         search: '',
         status: '',
         busy: null,
+        ruleBadges,
+        limited,
 
         async init() {
+            this.$watch('status', (status) => status === 'archived' && this.loadArchived());
             await this.load();
+        },
+
+        async loadArchived() {
+            this.loading = this.$store.s.archived === null;
+            try {
+                await this.$store.s.loadArchived();
+            } catch (error) {
+                this.$store.s.fail(error);
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        async restore(row) {
+            if (!config.canManage) return;
+            this.busy = row.key;
+            try {
+                await this.$store.s.archiveFeature(row, false);
+            } catch (error) {
+                this.$store.s.fail(error);
+            } finally {
+                this.busy = null;
+            }
         },
 
         async load() {
@@ -1069,7 +1176,7 @@ document.addEventListener('alpine:init', () => {
         },
 
         get rows() {
-            return this.$store.s.features ?? [];
+            return (this.status === 'archived' ? this.$store.s.archived : this.$store.s.features) ?? [];
         },
 
         get filtering() {
@@ -1081,7 +1188,10 @@ document.addEventListener('alpine:init', () => {
                 this.status === '' ||
                 (this.status === 'on' && row.enabled) ||
                 (this.status === 'off' && !row.enabled) ||
-                (this.status === 'overridden' && row.override_count > 0);
+                (this.status === 'overridden' && row.override_count > 0) ||
+                (this.status === 'scheduled' && row.window !== null) ||
+                (this.status === 'rollout' && (row.rules?.rollout ?? 100) < 100) ||
+                this.status === 'archived';
 
             return (this.search === '' || score([row.key, row.label, row.description].join(' '), this.search) > 0) && status;
         },
@@ -1155,15 +1265,90 @@ document.addEventListener('alpine:init', () => {
         copied: null,
         add: { type: config.scopes[0]?.alias ?? '', search: '', results: [], loading: false },
         bulk: { type: config.scopes[0]?.alias ?? '', text: '', state: 'true', preview: null, running: false },
+        rules: { from: '', until: '', rollout: '', requires: [], add: '' },
         timer: null,
         editor,
         ago,
         exact,
         plural,
+        ruleBadges,
 
         init() {
             this.$watch('$store.s.drawerId', () => this.refresh());
+            this.$watch('row', () => this.rulesDirty || this.resetRules());
             this.refresh();
+        },
+
+        /* --- flag rules ------------------------------------------------- */
+
+        draftOf(rules) {
+            return {
+                from: toLocalInput(rules?.enabled_from),
+                until: toLocalInput(rules?.enabled_until),
+                rollout: rules?.rollout ?? '',
+                requires: [...(rules?.requires ?? [])],
+            };
+        },
+
+        resetRules() {
+            this.rules = { ...this.draftOf(this.row?.rules), add: '' };
+        },
+
+        get rulesDirty() {
+            if (this.kind !== 'feature' || !this.row) return false;
+            const saved = this.draftOf(this.row.rules);
+            const draft = this.rules;
+            return (
+                draft.from !== saved.from ||
+                draft.until !== saved.until ||
+                rolloutValue(draft.rollout) !== rolloutValue(saved.rollout) ||
+                draft.requires.join('\n') !== saved.requires.join('\n')
+            );
+        },
+
+        get requireOptions() {
+            return (this.$store.s.features ?? []).filter((flag) => flag.key !== this.key && !this.rules.requires.includes(flag.key));
+        },
+
+        flagLabel(key) {
+            return this.$store.s.row('feature', key)?.label ?? key;
+        },
+
+        addRequirement() {
+            if (this.rules.add) this.rules.requires = [...this.rules.requires, this.rules.add];
+            this.rules.add = '';
+        },
+
+        async saveRules() {
+            if (!config.canManage || !this.row) return;
+            this.busy = 'rules';
+            try {
+                await this.$store.s.saveRules(this.row, {
+                    enabled_from: fromLocalInput(this.rules.from),
+                    enabled_until: fromLocalInput(this.rules.until),
+                    rollout: rolloutValue(this.rules.rollout),
+                    requires: this.rules.requires,
+                });
+                this.resetRules();
+                await this.loadHistory();
+            } catch (error) {
+                this.$store.s.fail(error);
+            } finally {
+                this.busy = null;
+            }
+        },
+
+        async setArchived(archived) {
+            if (!config.canManage || !this.row) return;
+            this.busy = 'archive';
+            try {
+                await this.$store.s.archiveFeature(this.row, archived);
+                await this.loadHistory();
+            } catch (error) {
+                this.$store.s.fail(error);
+            } finally {
+                this.busy = null;
+            }
         },
 
         get open() {
@@ -1183,8 +1368,8 @@ document.addEventListener('alpine:init', () => {
         },
 
         get notFound() {
-            const list = this.kind === 'feature' ? this.$store.s.features : this.$store.s.settings;
-            return this.open && list !== null && this.row === null;
+            const loaded = this.kind === 'feature' ? this.$store.s.features !== null && this.$store.s.archived !== null : this.$store.s.settings !== null;
+            return this.open && loaded && this.row === null;
         },
 
         async refresh() {
@@ -1200,9 +1385,14 @@ document.addEventListener('alpine:init', () => {
             this.bulk.text = '';
             try {
                 await this.$store.s.ensureCatalog();
+                // A deep link to an archived flag: it is only in the archived list.
+                if (this.kind === 'feature' && this.row === null && this.$store.s.archived === null) {
+                    await this.$store.s.loadArchived();
+                }
             } catch (error) {
                 this.$store.s.fail(error);
             }
+            this.resetRules();
             await Promise.all([this.loadOverrides(), this.loadHistory()]);
             this.$nextTick(() => this.$refs.drawerClose?.focus());
         },
@@ -1570,6 +1760,7 @@ document.addEventListener('alpine:init', () => {
     /* ------------------------------------------------------------------ */
 
     Alpine.data('overridesView', () => ({
+        ruleText,
         type: config.scopes[0]?.alias ?? '',
         search: '',
         records: [],
@@ -2205,10 +2396,32 @@ document.addEventListener('alpine:init', () => {
     }));
 });
 
+/** A flag's rules before and after (FeatureRules shape), as readable lines. */
+function rulesDiff(before, after) {
+    const fields = {
+        enabled_from: ['on from', (value) => (value ? exact(value) : 'any time')],
+        enabled_until: ['off from', (value) => (value ? exact(value) : 'never')],
+        rollout: ['rollout', (value) => (value === null || value === undefined ? 'everyone' : `${value}%`)],
+        requires: ['requires', (value) => (value?.length ? value.join(', ') : 'nothing')],
+    };
+    const lines = [];
+    for (const [name, [label, show]] of Object.entries(fields)) {
+        if (JSON.stringify(before[name] ?? null) !== JSON.stringify(after[name] ?? null)) {
+            lines.push({ type: 'change', text: `${label}: ${show(before[name])} → ${show(after[name])}` });
+        }
+    }
+    if (!before.archived_at && after.archived_at) lines.push({ type: 'remove', text: 'archived' });
+    if (before.archived_at && !after.archived_at) lines.push({ type: 'add', text: 'restored' });
+    return lines;
+}
+
 /** How a history entry changed, for display: { from, to, lines } (lines for JSON diffs). */
 function historyChange(entry) {
     if (entry.action === 'meta') {
         return { from: null, to: null, lines: structuredDiff(entry.old_meta ?? null, entry.new_meta ?? null) ?? [], meta: true };
+    }
+    if (entry.action === 'rules') {
+        return { from: null, to: null, lines: rulesDiff(entry.old_meta ?? {}, entry.new_meta ?? {}) };
     }
     if (entry.action === 'toggle') {
         // old_value: 'true' / 'false' / 'inherit'; null on rows written before the previous state was stored.
@@ -2254,4 +2467,5 @@ function clean(object) {
 }
 
 window.Alpine = Alpine;
+registerControls(Alpine);
 Alpine.start();

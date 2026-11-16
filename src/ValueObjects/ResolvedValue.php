@@ -15,6 +15,8 @@ final readonly class ResolvedValue
         public mixed $value,
         public ValueSource $source,
         public ?Model $scope = null,
+        /** Flags: the required flag that is off (dependency), or the record's bucket 0-99 (rollout). */
+        public string|int|null $detail = null,
     ) {}
 
     public function fromScope(): bool
@@ -33,6 +35,7 @@ final readonly class ResolvedValue
             'source' => $this->source->value,
             'scope_type' => $this->scope ? $this->scope::class : null,
             'scope_id' => $this->scope?->getKey(),
+            'detail' => $this->detail,
         ];
     }
 }

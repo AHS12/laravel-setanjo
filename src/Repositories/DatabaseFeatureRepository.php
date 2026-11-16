@@ -161,6 +161,7 @@ class DatabaseFeatureRepository implements FeatureRepositoryInterface
         $feature = $this->findOrNew($key, $createWith);
         $feature->fill(array_intersect_key($attributes, array_flip([
             'name', 'description', 'group_id', 'sort_order', 'meta',
+            'enabled_from', 'enabled_until', 'rollout', 'requires', 'archived_at',
         ])));
         $feature->save();
 
@@ -264,6 +265,12 @@ class DatabaseFeatureRepository implements FeatureRepositoryInterface
             'group_id' => $feature->group_id,
             'sort_order' => (int) $feature->sort_order,
             'meta' => $feature->meta,
+            // Strings, not Carbon, so the cached record stays plain data.
+            'enabled_from' => $feature->enabled_from?->toIso8601String(),
+            'enabled_until' => $feature->enabled_until?->toIso8601String(),
+            'rollout' => $feature->rollout,
+            'requires' => $feature->requires ?? [],
+            'archived_at' => $feature->archived_at?->toIso8601String(),
         ];
     }
 

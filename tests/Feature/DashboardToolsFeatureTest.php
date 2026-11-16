@@ -158,6 +158,82 @@ describe('Dashboard bulk flag overrides', function () {
     });
 });
 
+describe('Dashboard flag rules', function () {
+    it('changes only the rules sent', function () {
+        $this->putJson('/setanjo/api/features/beta_feature/rules', ['rollout' => 30, 'requires' => ['tax_feature']])
+            ->assertOk()
+            ->assertJsonPath('data.rules.rollout', 30)
+            ->assertJsonPath('data.rules.requires', ['tax_feature']);
+
+        $this->putJson('/setanjo/api/features/beta_feature/rules', ['enabled_from' => '2030-01-01T09:00:00Z'])
+            ->assertOk()
+            ->assertJsonPath('data.rules.rollout', 30)
+            ->assertJsonPath('data.window', 'pending');
+
+        $this->putJson('/setanjo/api/features/beta_feature/rules', ['rollout' => null, 'requires' => null, 'enabled_from' => null])
+            ->assertOk()
+            ->assertJsonPath('data.rules', ['enabled_from' => null, 'enabled_until' => null, 'rollout' => null, 'requires' => [], 'archived_at' => null])
+            ->assertJsonPath('data.window', null);
+    });
+
+    it('validates rules', function (array $body, string $field) {
+        $this->putJson('/setanjo/api/features/beta_feature/rules', $body)->assertUnprocessable()->assertJsonValidationErrors($field);
+    })->with([
+        'rollout over 100' => [['rollout' => 101], 'rollout'],
+        'not a date' => [['enabled_from' => 'soon'], 'enabled_from'],
+        'end before start' => [['enabled_from' => '2030-01-02', 'enabled_until' => '2030-01-01'], 'enabled_until'],
+        'unknown flag' => [['requires' => ['nope']], 'requires'],
+        'itself' => [['requires' => ['beta_feature']], 'requires'],
+    ]);
+
+    it('explains which rule decided a record\'s state', function () {
+        $user = User::query()->create(['name' => 'Jane', 'email' => 'jane@example.com']);
+        Settings::feature('beta_feature')->requires('tax_feature');
+
+        $this->getJson("/setanjo/api/features/beta_feature?scope_type=user&scope_id={$user->id}")
+            ->assertOk()
+            ->assertJsonPath('data.effective', false)
+            ->assertJsonPath('data.source', 'dependency')
+            ->assertJsonPath('data.detail', 'tax_feature');
+    });
+
+    it('archives and restores a flag', function () {
+        $this->postJson('/setanjo/api/features/beta_feature/archive')->assertOk()->assertJsonPath('data.archived', true);
+
+        expect(collect($this->getJson('/setanjo/api/features')->json('data'))->pluck('key'))->not->toContain('beta_feature')
+            ->and(collect($this->getJson('/setanjo/api/features?archived=1')->json('data'))->pluck('key')->all())->toBe(['beta_feature'])
+            ->and($this->getJson('/setanjo/api/overview')->json('data.features.archived'))->toBe(1);
+
+        $user = User::query()->create(['name' => 'Jane', 'email' => 'jane@example.com']);
+        $this->getJson("/setanjo/api/features/beta_feature?scope_type=user&scope_id={$user->id}")
+            ->assertOk()
+            ->assertJsonPath('data.effective', false)
+            ->assertJsonPath('data.source', 'archived');
+
+        $this->postJson('/setanjo/api/features/beta_feature/restore')->assertOk()->assertJsonPath('data.archived', false);
+        $this->postJson('/setanjo/api/features/nope/archive')->assertNotFound();
+    });
+
+    it('is blocked in readonly mode', function () {
+        config()->set('setanjo.dashboard.readonly', true);
+
+        $this->putJson('/setanjo/api/features/beta_feature/rules', ['rollout' => 10])->assertForbidden();
+        $this->postJson('/setanjo/api/features/beta_feature/archive')->assertForbidden();
+    });
+
+    it('reverts a rule change from history', function () {
+        config()->set('setanjo.history.enabled', true);
+        Settings::feature('beta_feature')->rollout(20);
+        Settings::feature('beta_feature')->rollout(80);
+        $id = SettingHistory::query()->orderByDesc('id')->value('id');
+
+        $this->getJson('/setanjo/api/history')->assertJsonPath('data.0.kind', 'feature')->assertJsonPath('data.0.revertable', true);
+        $this->postJson("/setanjo/api/history/{$id}/revert")->assertOk()->assertJsonPath('data.kind', 'feature');
+
+        expect(Settings::feature('beta_feature')->rules()->rollout)->toBe(20);
+    });
+});
+
 describe('Dashboard history revert', function () {
     beforeEach(function () {
         config()->set('setanjo.history.enabled', true);

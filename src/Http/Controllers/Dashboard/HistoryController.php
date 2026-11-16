@@ -57,7 +57,7 @@ class HistoryController extends Controller
                 'new_value' => $entry->new_value,
                 'old_meta' => $entry->old_meta,
                 'new_meta' => $entry->new_meta,
-                'kind' => $entry->action === HistoryAction::TOGGLE->value ? 'feature' : 'setting',
+                'kind' => self::kind($entry),
                 'revertable' => $this->blocker($entry) === null,
                 'created_at' => $entry->created_at->toIso8601String(),
             ])->values(),
@@ -90,7 +90,9 @@ class HistoryController extends Controller
         $scope = $entry->scope_type === null ? null : $this->entryScope($entry);
         $manager = $scope === null ? $this->setanjo : $this->setanjo->for($scope);
 
-        if ($entry->action === HistoryAction::TOGGLE->value) {
+        if ($entry->action === HistoryAction::RULES->value) {
+            $this->attempt(fn () => $this->setanjo->feature($key)->updateRules($entry->old_meta ?? []));
+        } elseif ($entry->action === HistoryAction::TOGGLE->value) {
             $this->attempt(fn () => $this->setanjo->feature($key)->for($scope)->toggle(
                 $entry->old_value === RecordSettingHistory::INHERIT ? null : $entry->old_value === 'true',
             ));
@@ -109,7 +111,7 @@ class HistoryController extends Controller
         return response()->json([
             'data' => [
                 'key' => $key,
-                'kind' => $entry->action === HistoryAction::TOGGLE->value ? 'feature' : 'setting',
+                'kind' => self::kind($entry),
                 'scope' => $scope === null ? null : $this->scopes->present($scope),
             ],
         ]);
@@ -120,7 +122,7 @@ class HistoryController extends Controller
      */
     protected function blocker(SettingHistory $entry): ?string
     {
-        if (! in_array($entry->action, [HistoryAction::SET->value, HistoryAction::FORGET->value, HistoryAction::META->value, HistoryAction::TOGGLE->value], true)) {
+        if (! in_array($entry->action, [HistoryAction::SET->value, HistoryAction::FORGET->value, HistoryAction::META->value, HistoryAction::TOGGLE->value, HistoryAction::RULES->value], true)) {
             return __('setanjo::dashboard.revert_unsupported');
         }
 
@@ -133,6 +135,11 @@ class HistoryController extends Controller
         }
 
         return null;
+    }
+
+    protected static function kind(SettingHistory $entry): string
+    {
+        return HistoryAction::tryFrom($entry->action)?->isFeature() ? 'feature' : 'setting';
     }
 
     /**

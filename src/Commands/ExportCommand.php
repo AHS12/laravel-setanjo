@@ -6,6 +6,7 @@ use Ahs12\Setanjo\Models\Feature;
 use Ahs12\Setanjo\Models\FeatureOverride;
 use Ahs12\Setanjo\Models\Setting;
 use Ahs12\Setanjo\Models\SettingGroup;
+use Ahs12\Setanjo\ValueObjects\FeatureRules;
 use Illuminate\Console\Command;
 
 class ExportCommand extends Command
@@ -75,6 +76,7 @@ class ExportCommand extends Command
                 'group' => $feature->group_id ? $slugs->get($feature->group_id) : null,
                 'sort_order' => (int) $feature->sort_order,
                 'meta' => $feature->meta,
+                'rules' => FeatureRules::fromArray($feature->only(['enabled_from', 'enabled_until', 'rollout', 'requires', 'archived_at']))->toArray(),
                 'overrides' => $scopeFilter === false ? [] : $feature->overrides
                     ->filter(fn (FeatureOverride $override) => $scopeFilter === null
                         || ($override->scope_type === $scopeFilter[0] && (int) $override->scope_id === $scopeFilter[1]))

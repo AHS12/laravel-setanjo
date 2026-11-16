@@ -9,4 +9,13 @@ enum HistoryAction: string
     case META = 'meta';
     case GROUP = 'group';
     case TOGGLE = 'toggle';
+    case RULES = 'rules';
+
+    /**
+     * Whether the entry is about a feature flag (else a setting).
+     */
+    public function isFeature(): bool
+    {
+        return $this === self::TOGGLE || $this === self::RULES;
+    }
 }

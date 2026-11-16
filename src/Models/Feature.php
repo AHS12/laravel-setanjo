@@ -20,6 +20,11 @@ use Illuminate\Support\Arr;
  * @property int|null $group_id
  * @property int $sort_order
  * @property array<string, mixed>|null $meta
+ * @property Carbon|null $enabled_from
+ * @property Carbon|null $enabled_until
+ * @property int|null $rollout
+ * @property array<int, string>|null $requires
+ * @property Carbon|null $archived_at
  * @property Carbon $created_at
  * @property Carbon $updated_at
  */
@@ -35,6 +40,11 @@ class Feature extends Model
         'group_id',
         'sort_order',
         'meta',
+        'enabled_from',
+        'enabled_until',
+        'rollout',
+        'requires',
+        'archived_at',
     ];
 
     protected $casts = [
@@ -42,6 +52,11 @@ class Feature extends Model
         'group_id' => 'integer',
         'sort_order' => 'integer',
         'meta' => 'array',
+        'enabled_from' => 'datetime',
+        'enabled_until' => 'datetime',
+        'rollout' => 'integer',
+        'requires' => 'array',
+        'archived_at' => 'datetime',
     ];
 
     public function getTable()

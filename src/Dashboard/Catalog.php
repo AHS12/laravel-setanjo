@@ -11,6 +11,7 @@ use Ahs12\Setanjo\Models\Setting;
 use Ahs12\Setanjo\Models\SettingGroup;
 use Ahs12\Setanjo\SetanjoManager;
 use Ahs12\Setanjo\Support\ScopeKey;
+use Ahs12\Setanjo\ValueObjects\FeatureRules;
 use Ahs12\Setanjo\ValueObjects\ResolvedValue;
 use Carbon\CarbonInterface;
 use Closure;
@@ -74,9 +75,11 @@ class Catalog
     }
 
     /**
+     * Every flag that is not archived, or with $archived only the archived ones.
+     *
      * @return array<int, array<string, mixed>>
      */
-    public function features(): array
+    public function features(bool $archived = false): array
     {
         $definitions = $this->manager->definitions()->features();
         $flags = $this->manager->featureRepository()->flags();
@@ -85,7 +88,11 @@ class Catalog
 
         $rows = [];
         foreach (array_unique([...array_keys($definitions), ...array_keys($flags)]) as $key) {
-            $rows[] = $this->featureRow($key, $definitions[$key] ?? null, $flags[$key] ?? null, $counts[$key] ?? 0, $order[$key] ?? count($order));
+            $row = $this->featureRow($key, $definitions[$key] ?? null, $flags[$key] ?? null, $counts[$key] ?? 0, $order[$key] ?? count($order));
+
+            if ($row['archived'] === $archived) {
+                $rows[] = $row;
+            }
         }
 
         return $this->sorted($rows);
@@ -148,37 +155,61 @@ class Catalog
         }
 
         foreach ($this->features() as $row) {
-            $override = $overrides[$row['key']] ?? null;
-
-            if ($missing && $override === null) {
+            if ($missing && ! array_key_exists($row['key'], $overrides)) {
                 continue;
             }
 
-            $flags[] = [
-                ...$this->slim($row),
-                'allowed' => $this->allows($row['key'], $scope),
-                'override' => $override,
-                ...($missing ? $this->unresolved() : [
-                    ...$this->effective($row, $this->manager->resolveFeature($row['key'], $scope)),
-                    'chain' => $this->chain($row, $scope, function (?Model $level) use ($features, $row) {
-                        if ($level === null) {
-                            $global = $features->flag($row['key'])['enabled'] ?? null;
-
-                            return [$global !== null, $global === null ? null : (bool) $global];
-                        }
-
-                        $levelOverrides = $features->overrides($level);
-
-                        return array_key_exists($row['key'], $levelOverrides) ? [true, $levelOverrides[$row['key']]] : [false, null];
-                    }),
-                ]),
-            ];
+            $flags[] = $this->scopedFeature($row, $scope, $missing);
         }
 
         return [
             'scope' => $this->scopes->present($scope),
             'settings' => $settings,
             'features' => $flags,
+        ];
+    }
+
+    /**
+     * One flag as one record sees it (archived flags included, unlike forScope()).
+     *
+     * @return array<string, mixed>|null
+     */
+    public function featureForScope(string $key, Model $scope): ?array
+    {
+        $row = $this->feature($key);
+        $this->presented = [];
+
+        return $row === null ? null : $this->scopedFeature($row, $scope, $this->scopes->isGhost($scope));
+    }
+
+    /**
+     * @param  array<string, mixed>  $row  a featureRow()
+     * @return array<string, mixed>
+     */
+    protected function scopedFeature(array $row, Model $scope, bool $missing): array
+    {
+        $features = $this->manager->featureRepository();
+
+        return [
+            ...$this->slim($row),
+            'rules' => $row['rules'],
+            'allowed' => $this->allows($row['key'], $scope),
+            'override' => $features->overrides($scope)[$row['key']] ?? null,
+            ...($missing ? [...$this->unresolved(), 'detail' => null] : [
+                ...$this->effective($row, $resolved = $this->manager->resolveFeature($row['key'], $scope)),
+                'detail' => $resolved->detail,
+                'chain' => $this->chain($row, $scope, function (?Model $level) use ($features, $row) {
+                    if ($level === null) {
+                        $global = $features->flag($row['key'])['enabled'] ?? null;
+
+                        return [$global !== null, $global === null ? null : (bool) $global];
+                    }
+
+                    $levelOverrides = $features->overrides($level);
+
+                    return array_key_exists($row['key'], $levelOverrides) ? [true, $levelOverrides[$row['key']]] : [false, null];
+                }),
+            ]),
         ];
     }
 
@@ -354,6 +385,9 @@ class Catalog
                 'on' => $features->where('enabled', true)->count(),
                 'off' => $features->where('enabled', false)->count(),
                 'overridden' => $features->where('override_count', '>', 0)->count(),
+                'scheduled' => $features->whereNotNull('window')->count(),
+                'rolling_out' => $features->filter(fn (array $row) => ($row['rules']['rollout'] ?? 100) < 100)->count(),
+                'archived' => count($this->features(archived: true)),
             ],
             'groups' => SettingGroup::query()->count(),
             'scopes' => $scopeTypes,
@@ -503,6 +537,7 @@ class Catalog
         $storedMeta = $flag['meta'] ?? null;
         $default = (bool) ($definition?->default() ?? false);
         $global = $flag['enabled'] ?? null;
+        $rules = FeatureRules::fromArray($flag);
 
         return [
             'key' => $key,
@@ -522,6 +557,9 @@ class Catalog
             'stored_meta' => $storedMeta === null ? null : self::jsonObject($storedMeta),
             'override_count' => $overrides,
             'scopes' => $this->scopeAliases($definition),
+            'rules' => $rules->toArray(),
+            'window' => $rules->window(),
+            'archived' => $rules->isArchived(),
         ];
     }
 

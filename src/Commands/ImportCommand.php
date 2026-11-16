@@ -8,6 +8,7 @@ use Ahs12\Setanjo\Models\FeatureOverride;
 use Ahs12\Setanjo\Models\Setting;
 use Ahs12\Setanjo\Models\SettingGroup;
 use Ahs12\Setanjo\SetanjoManager;
+use Ahs12\Setanjo\ValueObjects\FeatureRules;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use JsonException;
@@ -85,6 +86,8 @@ class ImportCommand extends Command
                 'group_id' => isset($item['group']) ? ($groupIds[$item['group']] ?? null) : null,
                 'sort_order' => (int) ($item['sort_order'] ?? 0),
                 'meta' => $item['meta'] ?? null,
+                // Exports made before 3.2 have no rules: keep the ones already stored.
+                ...(isset($item['rules']) && is_array($item['rules']) ? FeatureRules::fromArray($item['rules'])->toAttributes() : []),
             ]);
 
             foreach ($item['overrides'] ?? [] as $override) {
