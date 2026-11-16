@@ -2,6 +2,55 @@
 
 All notable changes to `laravel-setanjo` will be documented in this file.
 
+## 3.0.0 - 2026-11-15
+
+### What's Changed
+
+##### Highlights
+
+v3 is additive: the 2.x API (`Settings::get/set/has/forget/all/flush/for/forTenantId`, `HasSettings`) keeps working and existing rows are read unchanged. Run the four new migrations; definitions and feature-flag tables can be adopted later. See [UPGRADE.md](https://github.com/AHS12/laravel-setanjo/blob/main/UPGRADE.md).
+
+##### What's New
+
+* **Setting definitions:** declare settings in code (`SettingDefinition` + `DefinesSetting`, usually on an enum) with type, default, label, group, validation rules and allowed scopes. `set()` validates and coerces to the declared type; `get()` falls back to the definition default.
+* **Meta:** free-form JSON per setting (`unit`, `min`/`max`, `options`, ...) with a configurable size cap.
+* **Groups:** ordered setting groups with assign/reorder helpers; works with an app's existing groups table via `groups_table`.
+* **Feature flags:** dedicated `setanjo_features` / `setanjo_feature_overrides` tables with a global state plus per-user/tenant/branch overrides. Includes `setanjo.feature` middleware, `@feature` Blade directive, opt-in Gate hook and `HasFeatures` trait.
+* **Layered resolution:** user → tenant → global → default, loaded in one query; `explain()` / `effective()` show which layer a value came from.
+* **Events & history:** `SettingUpdated`, `SettingForgotten`, `SettingMetaUpdated`, `FeatureToggled`, `SettingGroupChanged` and more; optional history table that masks sensitive values.
+* **Commands:** `setanjo:sync` (`--dry-run`, `--prune`, `--force-types`), `setanjo:export` / `setanjo:import`, `setanjo:migrate-feature-flags`.
+
+##### Fixed
+
+* `has()` returned `false` for a stored `null`.
+* Changing a key's type (e.g. int → array) threw "Array to string conversion".
+* Queue workers and Octane kept loaded values for the whole process; they are now reset before every job and request.
+* Cache flushing now works on every cache driver (versioned keys, no tags).
+* `setanjo:clear-cache` returns an exit code instead of calling `exit(1)`.
+* Migration rollback keeps an app's own pre-existing `group_id` column.
+
+##### Behaviour Changes
+
+* `has()` on a stored `null` now returns `true`.
+* `get()` on a defined key with no stored value returns the definition default.
+* `Settings::set()` throws for keys defined as features.
+* Cache keys are versioned (`{prefix}:v{n}:settings:{scope}`); hand-built key clearing no longer works — use `Settings::forgetCache()` / `flushCache()`.
+* The repository is now a singleton shared with the manager.
+* `SettingsRepositoryInterface` has new methods; custom repositories must implement them (or extend `DatabaseSettingsRepository`).
+
+##### Deprecated
+
+* `setanjo:install-defaults` in favour of `setanjo:sync`.
+
+##### Internal
+
+* Test suite runs against MySQL 8.4 and Postgres 17 in CI (`DB_DRIVER`), in addition to SQLite.
+* Update CHANGELOG for 2.0.0 by @github-actions[bot] in https://github.com/AHS12/laravel-setanjo/pull/21
+* Update CHANGELOG for 2.0.0 by @github-actions[bot] in https://github.com/AHS12/laravel-setanjo/pull/21
+* RC 3.0.0 by @AHS12 in https://github.com/AHS12/laravel-setanjo/pull/22
+
+**Full Changelog**: https://github.com/AHS12/laravel-setanjo/compare/2.0.0...3.0.0
+
 ## 2.0.0 - 2026-09-23
 
 ### What's Changed
