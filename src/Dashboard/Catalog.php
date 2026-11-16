@@ -17,6 +17,7 @@ use Closure;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use stdClass;
 
 /**
  * Builds the rows the dashboard shows: every defined or stored setting and feature flag,
@@ -431,6 +432,17 @@ class Catalog
         return ($row['sensitive'] ?? false) && $value !== null ? null : $value;
     }
 
+    /**
+     * Meta for JSON: an empty array becomes an object, so clients always get {} and never [].
+     *
+     * @param  array<array-key, mixed>  $value
+     * @return array<array-key, mixed>|stdClass
+     */
+    public static function jsonObject(array $value): array|stdClass
+    {
+        return $value === [] ? new stdClass : $value;
+    }
+
     public function groupId(?SettingDefinition $definition): ?int
     {
         $slug = DefinitionRegistry::groupSlug($definition);
@@ -473,9 +485,9 @@ class Catalog
             'readonly' => $locked || (bool) ($meta['readonly'] ?? false),
             'group_id' => $record['group_id'] ?? $this->groupId($definition),
             'sort_order' => $record !== null ? (int) $record['sort_order'] : $position,
-            'meta' => $meta,
-            'definition_meta' => $definitionMeta,
-            'stored_meta' => $storedMeta,
+            'meta' => self::jsonObject($meta),
+            'definition_meta' => self::jsonObject($definitionMeta),
+            'stored_meta' => $storedMeta === null ? null : self::jsonObject($storedMeta),
             'override_count' => $overrides,
             'scopes' => $this->scopeAliases($definition),
         ];
@@ -505,9 +517,9 @@ class Catalog
             'source' => $global === null ? 'default' : 'global',
             'group_id' => $flag['group_id'] ?? $this->groupId($definition),
             'sort_order' => $flag !== null ? (int) $flag['sort_order'] : $position,
-            'meta' => array_replace($definitionMeta, $storedMeta ?? []),
-            'definition_meta' => $definitionMeta,
-            'stored_meta' => $storedMeta,
+            'meta' => self::jsonObject(array_replace($definitionMeta, $storedMeta ?? [])),
+            'definition_meta' => self::jsonObject($definitionMeta),
+            'stored_meta' => $storedMeta === null ? null : self::jsonObject($storedMeta),
             'override_count' => $overrides,
             'scopes' => $this->scopeAliases($definition),
         ];
