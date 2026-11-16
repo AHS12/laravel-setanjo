@@ -116,7 +116,7 @@ All paths are relative to the prefix (`/api/setanjo` by default).
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| GET | `/overview` | Counts: settings, flags, overrides per scope type, most overridden keys |
+| GET | `/overview` | Counts: settings, flags (on / off / scheduled / rolling out / archived), overrides per scope type, most overridden keys |
 | GET | `/settings` | Every defined or stored setting |
 | GET | `/settings/{key}` | One setting; with `scope_type` + `scope_id`, as that record sees it |
 | PUT | `/settings/{key}` | Set the value (global, or for a record) |
@@ -359,7 +359,7 @@ every setting and flag as the record sees it (same rows as `GET /settings/{key}?
 ### History
 
 `GET /history?key=&action=&scope_type=&scope_id=&page=&per_page=` (`action`: `set`,
-`forget`, `meta`, `toggle`). When history is off: `{"enabled": false, "message": "...", "data": []}`.
+`forget`, `meta`, `toggle`, `rules`). When history is off: `{"enabled": false, "message": "...", "data": []}`.
 
 ```json
 {
@@ -385,11 +385,13 @@ every setting and flag as the record sees it (same rows as `GET /settings/{key}?
 ```
 
 Values are stored as strings (JSON for non-strings); flag states as `"true"`, `"false"`,
-`"inherit"` (`null` for "inherit" in `new_value`).
+`"inherit"` (`null` for "inherit" in `new_value`). `rules` entries (3.2) are global and hold a
+flag's rules before and after the change in `old_meta` / `new_meta`
+(`enabled_from`, `enabled_until`, `rollout`, `requires`, `archived_at`).
 
 `POST /history/{id}/revert` writes back what the change replaced, for the same scope, and is
-recorded as a new change. 422 when it cannot (`revertable: false`: sensitive values, flag
-changes recorded before 3.1).
+recorded as a new change; for a `rules` entry it puts the flag's previous rules back. 422 when
+it cannot (`revertable: false`: sensitive values, flag changes recorded before 3.1).
 
 ### Import / export
 

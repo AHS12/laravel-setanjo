@@ -439,12 +439,13 @@ leaves stale assets behind.
 
 | Screen | What you can do |
 | --- | --- |
-| Overview | Counts of settings, flags (on/off), overrides per scope type and drift issues; the latest changes; the most overridden keys |
+| Overview | Counts of settings, flags (on/off, scheduled, rolling out, archived), overrides per scope type and drift issues; the latest changes; the most overridden keys |
 | Settings | Edit values with editors chosen by type and meta (toggle, number + unit, select, JSON with validation, color picker, secrets); drag to reorder settings, move them between groups and reorder groups; reset to default |
-| Feature flags | Set each flag's global state (default / on / off); see override counts |
+| Feature flags | Set each flag's global state (default / on / off); see override counts and rule badges (starts / ends, rollout %, required flags); filter by scheduled, rolling out or archived, and restore archived flags |
 | Setting / flag detail | Click any key: its value, every record that overrides it (newest first, by type), its recent changes with Revert, and copyable code (`Settings::get(...)`, `@feature(...)`, the route middleware). Each key has its own link (`#/flags/new_checkout`) to share |
+| Flag rules | From the flag's detail: a schedule (date and time picker), a rollout percentage, the flags it requires, and Archive / Restore; saving can be undone and is recorded in history |
 | Flag targeting | From the flag's detail: search records of any scope type and turn the flag on or off for them, or paste up to 1000 ids, preview what changes, then apply |
-| Overrides | Pick a record of any configured scope type, then set or remove its flag and setting overrides; every row shows the full resolution chain (`Jane: not set › Acme Ltd: "daily" › Global: "weekly"`) and which level wins |
+| Overrides | Pick a record of any configured scope type, then set or remove its flag and setting overrides; every row shows the full resolution chain (`Jane: not set › Acme Ltd: "daily" › Global: "weekly"`) and which level wins, and for flags which rule decided ("Off: needs new_cart on") |
 | Groups | Create, edit, delete and reorder groups |
 | Meta | Edit the meta stored for a setting or flag next to the meta declared in code (key/value or raw JSON) |
 | Drift | Compare definitions with the database; preview `setanjo:sync`, then run it |
