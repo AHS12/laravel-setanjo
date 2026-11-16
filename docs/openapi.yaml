@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Setanjo HTTP API
-  version: 3.1.0
+  version: 3.2.0
   summary: Settings, feature flags and per-record overrides for a Laravel app.
   description: |
     The JSON API of [laravel-setanjo](https://github.com/AHS12/laravel-setanjo). It serves
@@ -217,6 +217,11 @@ paths:
       tags: [Feature flags]
       operationId: listFeatures
       summary: Every feature flag
+      description: Archived flags are left out unless `archived=1`, which lists only them.
+      parameters:
+        - name: archived
+          in: query
+          schema: { type: boolean }
       responses:
         '200': { $ref: '#/components/responses/FeatureList' }
         '401': { $ref: '#/components/responses/Unauthenticated' }
@@ -325,6 +330,64 @@ paths:
         '401': { $ref: '#/components/responses/Unauthenticated' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /features/{key}/rules:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    put:
+      tags: [Feature flags]
+      operationId: setFeatureRules
+      summary: Change the schedule, rollout or required flags
+      description: 'Only the fields sent change; `null` clears one. The rules apply when the global state (or default) is on: outside the schedule, while a required flag is off, or outside the rollout, the flag is off. A record''s own override always wins. Since 3.2.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled_from: { type: [string, 'null'], format: date-time }
+                enabled_until: { type: [string, 'null'], format: date-time, description: 'Must be after enabled_from.' }
+                rollout: { type: [integer, 'null'], minimum: 0, maximum: 100 }
+                requires:
+                  type: [array, 'null']
+                  maxItems: 20
+                  items: { type: string }
+                  description: 'Keys of other flags. Unknown flags, the flag itself and cycles are refused (422).'
+            example: { enabled_from: '2026-12-01T09:00:00+00:00', rollout: 25, requires: [new_checkout] }
+      responses:
+        '200': { $ref: '#/components/responses/FeatureOne' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/Unprocessable' }
+
+  /features/{key}/archive:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    post:
+      tags: [Feature flags]
+      operationId: archiveFeature
+      summary: Archive a flag
+      description: The flag leaves the lists and reads as off everywhere, overrides included. Its overrides and history are kept. Since 3.2.
+      responses:
+        '200': { $ref: '#/components/responses/FeatureOne' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /features/{key}/restore:
+    parameters:
+      - $ref: '#/components/parameters/Key'
+    post:
+      tags: [Feature flags]
+      operationId: restoreFeature
+      summary: Restore an archived flag
+      responses:
+        '200': { $ref: '#/components/responses/FeatureOne' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /features/{key}/overrides:
     parameters:
@@ -814,6 +877,15 @@ components:
               data:
                 type: array
                 items: { $ref: '#/components/schemas/Feature' }
+    FeatureOne:
+      description: The flag.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [data]
+            properties:
+              data: { $ref: '#/components/schemas/Feature' }
     GroupList:
       description: The groups, in order.
       content:
@@ -980,7 +1052,7 @@ components:
           description: Scope types allowed to override it (empty means any).
     Feature:
       type: object
-      required: [key, label, description, type, defined, stored, default, global, enabled, source, group_id, sort_order, meta, definition_meta, stored_meta, override_count, scopes]
+      required: [key, label, description, type, defined, stored, default, global, enabled, source, group_id, sort_order, meta, definition_meta, stored_meta, override_count, scopes, rules, window, archived]
       properties:
         key: { type: string, example: new_checkout }
         label: { type: string }
@@ -990,7 +1062,7 @@ components:
         stored: { type: boolean }
         default: { type: boolean }
         global: { type: [boolean, 'null'], description: 'The stored global state; null when not set.' }
-        enabled: { type: boolean, description: 'What everyone without an override gets.' }
+        enabled: { type: boolean, description: 'The global state, or the default: the switch the rules apply to.' }
         source: { type: string, enum: [global, default] }
         group_id: { type: [integer, 'null'] }
         sort_order: { type: integer }
@@ -1004,6 +1076,26 @@ components:
         scopes:
           type: array
           items: { type: string }
+        rules: { $ref: '#/components/schemas/FeatureRules' }
+        window:
+          type: [string, 'null']
+          enum: [pending, open, ended, null]
+          description: 'Where now is relative to the schedule; null without one.'
+        archived: { type: boolean }
+
+    FeatureRules:
+      type: object
+      description: 'Since 3.2. Empty rules: every field null and `requires: []`.'
+      required: [enabled_from, enabled_until, rollout, requires, archived_at]
+      properties:
+        enabled_from: { type: [string, 'null'], format: date-time, description: 'Off before this time.' }
+        enabled_until: { type: [string, 'null'], format: date-time, description: 'Off from this time on.' }
+        rollout: { type: [integer, 'null'], minimum: 0, maximum: 100, description: 'Share of records that get the flag, by a stable bucket per record and flag. null: everyone.' }
+        requires:
+          type: array
+          items: { type: string }
+          description: Flags that must be on for the same record.
+        archived_at: { type: [string, 'null'], format: date-time }
 
     ChainLevel:
       type: object
@@ -1023,7 +1115,10 @@ components:
       properties:
         allowed: { type: boolean, description: 'The definition''s scopes() allow this record''s type.' }
         effective: { description: 'The value the record gets.' }
-        source: { type: string, enum: [scope, global, default, missing] }
+        source:
+          type: string
+          enum: [scope, global, default, missing, archived, schedule, dependency, rollout]
+          description: 'Flags only: archived, schedule, dependency and rollout mean that rule decided the state (since 3.2).'
         source_scope:
           oneOf:
             - $ref: '#/components/schemas/Record'
@@ -1067,6 +1162,10 @@ components:
             sort_order: { type: integer }
             meta: { $ref: '#/components/schemas/Meta' }
             override: { type: [boolean, 'null'], description: 'The record''s own state; null when it inherits.' }
+            rules: { $ref: '#/components/schemas/FeatureRules' }
+            detail:
+              type: [string, integer, 'null']
+              description: 'source dependency: the required flag that is off. source rollout: the record''s bucket (0-99); it gets the flag when the bucket is below the percentage.'
 
     KeyOverride:
       type: object
@@ -1159,12 +1258,15 @@ components:
             overridden: { type: integer, description: 'Settings with at least one override.' }
         features:
           type: object
-          required: [total, 'on', 'off', overridden]
+          required: [total, 'on', 'off', overridden, scheduled, rolling_out, archived]
           properties:
-            total: { type: integer }
+            total: { type: integer, description: 'Flags that are not archived.' }
             'on': { type: integer }
             'off': { type: integer }
             overridden: { type: integer }
+            scheduled: { type: integer }
+            rolling_out: { type: integer, description: 'Flags with a rollout below 100%.' }
+            archived: { type: integer }
         groups: { type: integer }
         scopes:
           type: array
@@ -1247,7 +1349,7 @@ components:
 
     HistoryAction:
       type: string
-      enum: [set, forget, meta, group, toggle]
+      enum: [set, forget, meta, group, toggle, rules]
     HistoryEntry:
       type: object
       required: [id, key, action, scope, causer, old_value, new_value, old_meta, new_meta, kind, revertable, created_at]
@@ -1267,7 +1369,7 @@ components:
             - type: 'null'
         old_value: { type: [string, 'null'], description: 'Strings as they are, other values as JSON; flag states as "true", "false" or "inherit" (null on rows written before 3.1). Sensitive values are "********".' }
         new_value: { type: [string, 'null'], description: 'Like old_value; null when a flag now inherits.' }
-        old_meta: { type: [object, 'null'] }
+        old_meta: { type: [object, 'null'], description: 'For `rules` entries: the flag''s rules before the change (FeatureRules).' }
         new_meta: { type: [object, 'null'] }
         kind: { type: string, enum: [setting, feature] }
         revertable: { type: boolean }

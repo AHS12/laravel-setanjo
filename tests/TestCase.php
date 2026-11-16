@@ -111,6 +111,7 @@ class TestCase extends Orchestra
             $dir.'add_v3_columns_to_setanjo_settings_table.php.stub',
             $dir.'create_setanjo_history_table.php.stub',
             $dir.'create_setanjo_features_tables.php.stub',
+            $dir.'add_v3_2_columns_to_setanjo_features_table.php.stub',
         ];
     }
 

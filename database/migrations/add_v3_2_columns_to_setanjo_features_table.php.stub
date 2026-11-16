@@ -1,0 +1,53 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+/*
+ * v3.2 flag rules: a schedule window, a percentage rollout, required flags and archiving.
+ * Additive only: existing flags keep working exactly as before (every new column is null).
+ */
+return new class extends Migration
+{
+    public function up(): void
+    {
+        $table = $this->getTableName();
+
+        Schema::table($table, function (Blueprint $blueprint) use ($table) {
+            if (! Schema::hasColumn($table, 'enabled_from')) {
+                $blueprint->timestamp('enabled_from')->nullable();
+            }
+            if (! Schema::hasColumn($table, 'enabled_until')) {
+                $blueprint->timestamp('enabled_until')->nullable();
+            }
+            if (! Schema::hasColumn($table, 'rollout')) {
+                $blueprint->unsignedTinyInteger('rollout')->nullable();
+            }
+            if (! Schema::hasColumn($table, 'requires')) {
+                $blueprint->json('requires')->nullable();
+            }
+            if (! Schema::hasColumn($table, 'archived_at')) {
+                $blueprint->timestamp('archived_at')->nullable();
+            }
+        });
+    }
+
+    public function down(): void
+    {
+        $table = $this->getTableName();
+
+        Schema::table($table, function (Blueprint $blueprint) use ($table) {
+            foreach (['enabled_from', 'enabled_until', 'rollout', 'requires', 'archived_at'] as $column) {
+                if (Schema::hasColumn($table, $column)) {
+                    $blueprint->dropColumn($column);
+                }
+            }
+        });
+    }
+
+    private function getTableName(): string
+    {
+        return config('setanjo.features.table') ?: 'setanjo_features';
+    }
+};

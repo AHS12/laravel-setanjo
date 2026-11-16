@@ -22,7 +22,7 @@ A powerful Laravel package for managing application settings and configurations.
 -   🧪 **Fully Tested**: Comprehensive test suite included
 -   ✅ **Type Safety**: Automatic type detection and conversion
 -   📝 **Definitions in Code**: Declare settings on an enum (default, type, label, group, rules, meta)
--   🚩 **Feature Flags**: Global flags with per-user / per-tenant / any-scope overrides
+-   🚩 **Feature Flags**: Global flags with per-user / per-tenant / any-scope overrides, schedules, percentage rollouts, required flags and archiving
 -   🔗 **Scope Chain**: Resolve effective values through user → branch → tenant → global → default
 -   🏷️ **Metadata**: Free-form JSON meta per setting (unit, min, max, options, help, sensitive, ...)
 -   🗂️ **Groups & Ordering**: Group settings and order groups and settings (drag-and-drop ready)
@@ -336,6 +336,42 @@ Settings::featureRepository()->overridesOf('tax_features'); // overrides with th
 Settings::groups()->assignFeature('tax_features', 'finance');
 ```
 
+### Rules: schedule, rollout, required flags, archive
+
+Rules belong to the flag (not to a scope) and can only turn an **on** flag off for some records.
+The order is:
+
+1. An archived flag is off everywhere, overrides included.
+2. A record's own override (anywhere in its scope chain) wins over every rule below.
+3. The global state, or the default, is the switch. If it is off, the flag is off.
+4. Outside the schedule window the flag is off.
+5. If a required flag is off for the same subject, the flag is off.
+6. With a rollout below 100%, only that share of records gets the flag.
+
+```php
+$flag = Settings::feature('new_checkout');
+
+$flag->enable()->schedule('2026-12-01 09:00', '2027-01-01'); // on from / off from (either may be null)
+$flag->rollout(25);                                          // 25% of records; null for everyone
+$flag->requires(['new_cart']);                               // off unless new_cart is on too
+$flag->archive();                                            // hide it: reads as off everywhere
+$flag->restore();
+
+$flag->rules();                                // FeatureRules: enabledFrom, enabledUntil, rollout, requires, archivedAt
+$flag->updateRules(['rollout' => 50, 'requires' => []]);
+$flag->for($user)->explain();                  // ResolvedValue: source schedule / dependency / rollout / archived, and detail
+```
+
+Each record gets a stable bucket (0-99) per flag, from the flag key and the record's morph class
+and key: the same record always gets the same answer, and raising the percentage only adds
+records. A rollout needs a subject: without one (no `for()` and no authenticated user) only a
+100% rollout is on. Requiring an unknown flag, the flag itself or a cycle throws
+`InvalidSettingValueException`. Rule changes fire `FeatureRulesChanged` and are recorded in
+history (action `rules`), where the dashboard can revert them.
+
+Archive a flag your code no longer checks: it leaves the dashboard lists and keeps its
+overrides and history until you restore it or `setanjo:sync --prune` deletes it.
+
 Set `features.gate` to `true` to use `Gate::allows('feature:tax_features')`. Set
 `features.strict` to `true` to throw on feature keys that have no feature definition.
 
@@ -387,8 +423,8 @@ adds missing columns.
 ## Events and History
 
 Events: `SettingUpdated`, `SettingForgotten`, `SettingMetaUpdated`, `SettingsFlushed`,
-`FeatureToggled`, `SettingGroupChanged`, `SettingsSynced`. Listen to them for audit logs or
-to clear other caches.
+`FeatureToggled`, `FeatureRulesChanged`, `SettingGroupChanged`, `SettingsSynced`. Listen to
+them for audit logs or to clear other caches.
 
 Set `history.enabled` to `true` to record every change (value, meta, scope, causer) in
 `setanjo_history`. Saving the value a key already has is not recorded. Flag changes store the
@@ -403,12 +439,13 @@ leaves stale assets behind.
 
 | Screen | What you can do |
 | --- | --- |
-| Overview | Counts of settings, flags (on/off), overrides per scope type and drift issues; the latest changes; the most overridden keys |
+| Overview | Counts of settings, flags (on/off, scheduled, rolling out, archived), overrides per scope type and drift issues; the latest changes; the most overridden keys |
 | Settings | Edit values with editors chosen by type and meta (toggle, number + unit, select, JSON with validation, color picker, secrets); drag to reorder settings, move them between groups and reorder groups; reset to default |
-| Feature flags | Set each flag's global state (default / on / off); see override counts |
+| Feature flags | Set each flag's global state (default / on / off); see override counts and rule badges (starts / ends, rollout %, required flags); filter by scheduled, rolling out or archived, and restore archived flags |
 | Setting / flag detail | Click any key: its value, every record that overrides it (newest first, by type), its recent changes with Revert, and copyable code (`Settings::get(...)`, `@feature(...)`, the route middleware). Each key has its own link (`#/flags/new_checkout`) to share |
+| Flag rules | From the flag's detail: a schedule (date and time picker), a rollout percentage, the flags it requires, and Archive / Restore; saving can be undone and is recorded in history |
 | Flag targeting | From the flag's detail: search records of any scope type and turn the flag on or off for them, or paste up to 1000 ids, preview what changes, then apply |
-| Overrides | Pick a record of any configured scope type, then set or remove its flag and setting overrides; every row shows the full resolution chain (`Jane: not set › Acme Ltd: "daily" › Global: "weekly"`) and which level wins |
+| Overrides | Pick a record of any configured scope type, then set or remove its flag and setting overrides; every row shows the full resolution chain (`Jane: not set › Acme Ltd: "daily" › Global: "weekly"`) and which level wins, and for flags which rule decided ("Off: needs new_cart on") |
 | Groups | Create, edit, delete and reorder groups |
 | Meta | Edit the meta stored for a setting or flag next to the meta declared in code (key/value or raw JSON) |
 | Drift | Compare definitions with the database; preview `setanjo:sync`, then run it |

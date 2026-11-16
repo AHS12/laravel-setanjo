@@ -66,6 +66,11 @@ class InvalidSettingValueException extends InvalidArgumentException
         );
     }
 
+    public static function invalidRule(string $key, string $field, string $message): self
+    {
+        return new self("Feature [{$key}]: {$message}", $key, [$field => [$message]]);
+    }
+
     public function getSettingKey(): string
     {
         return $this->settingKey;

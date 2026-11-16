@@ -15,7 +15,8 @@ interface FeatureRepositoryInterface
     /**
      * Every stored flag keyed by feature key.
      *
-     * Record shape: id, enabled (?bool), name, description, group_id, sort_order, meta.
+     * Record shape: id, enabled (?bool), name, description, group_id, sort_order, meta, and the
+     * rules: enabled_from, enabled_until, archived_at (ISO 8601 or null), rollout (?int), requires (string[]).
      *
      * @return array<string, array<string, mixed>>
      */
@@ -58,7 +59,8 @@ interface FeatureRepositoryInterface
     public function forgetOverride(string $key, Model $scope): bool;
 
     /**
-     * Update flag attributes (name, description, group_id, sort_order, meta).
+     * Update flag attributes (name, description, group_id, sort_order, meta) and rules
+     * (enabled_from, enabled_until, rollout, requires, archived_at).
      *
      * @param  array<string, mixed>  $attributes
      * @param  array<string, mixed>  $createWith

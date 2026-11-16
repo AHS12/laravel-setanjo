@@ -36,6 +36,9 @@ Route::post('features/{key}/overrides', [FeaturesController::class, 'bulk'])->wh
 Route::get('features/{key}', [FeaturesController::class, 'show'])->where('key', $key)->name('features.show');
 Route::put('features/{key}', [FeaturesController::class, 'update'])->where('key', $key)->name('features.update');
 Route::put('features/{key}/meta', [FeaturesController::class, 'meta'])->where('key', $key)->name('features.meta');
+Route::put('features/{key}/rules', [FeaturesController::class, 'rules'])->where('key', $key)->name('features.rules');
+Route::post('features/{key}/archive', [FeaturesController::class, 'archive'])->where('key', $key)->name('features.archive');
+Route::post('features/{key}/restore', [FeaturesController::class, 'restore'])->where('key', $key)->name('features.restore');
 
 Route::get('groups', [GroupsController::class, 'index'])->name('groups.index');
 Route::post('groups', [GroupsController::class, 'store'])->name('groups.store');

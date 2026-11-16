@@ -10,9 +10,51 @@ use Illuminate\Support\Facades\DB;
 
 class FeaturesController extends Controller
 {
-    public function index(): JsonResponse
+    /**
+     * Every flag, or with ?archived=1 only the archived ones.
+     */
+    public function index(Request $request): JsonResponse
     {
-        return response()->json(['data' => $this->catalog->features()]);
+        $request->validate(['archived' => 'sometimes|boolean']);
+
+        return response()->json(['data' => $this->catalog->features($request->boolean('archived'))]);
+    }
+
+    /**
+     * Change the schedule, rollout or required flags. Only the fields sent are changed; null clears one.
+     */
+    public function rules(Request $request, string $key): JsonResponse
+    {
+        $request->validate([
+            'enabled_from' => 'sometimes|nullable|date',
+            'enabled_until' => 'sometimes|nullable|date',
+            'rollout' => 'sometimes|nullable|integer|min:0|max:100',
+            'requires' => 'sometimes|nullable|array|max:20',
+            'requires.*' => 'string',
+        ]);
+
+        $this->ensureFeature($key);
+        $this->attempt(fn () => $this->setanjo->feature($key)->updateRules(
+            $request->only(['enabled_from', 'enabled_until', 'rollout', 'requires']),
+        ));
+
+        return $this->respond($key, null);
+    }
+
+    public function archive(string $key): JsonResponse
+    {
+        $this->ensureFeature($key);
+        $this->setanjo->feature($key)->archive();
+
+        return $this->respond($key, null);
+    }
+
+    public function restore(string $key): JsonResponse
+    {
+        $this->ensureFeature($key);
+        $this->setanjo->feature($key)->restore();
+
+        return $this->respond($key, null);
     }
 
     /**
@@ -35,9 +77,7 @@ class FeaturesController extends Controller
      */
     public function show(Request $request, string $key): JsonResponse
     {
-        if ($this->catalog->feature($key) === null) {
-            throw DashboardException::notFound(__('setanjo::dashboard.unknown_key', ['key' => $key]));
-        }
+        $this->ensureFeature($key);
 
         return $this->respond($key, $this->scopeFrom($request));
     }
@@ -64,9 +104,7 @@ class FeaturesController extends Controller
             'dry_run' => 'sometimes|boolean',
         ]);
 
-        if ($this->catalog->feature($key) === null) {
-            throw DashboardException::notFound(__('setanjo::dashboard.unknown_key', ['key' => $key]));
-        }
+        $this->ensureFeature($key);
 
         $alias = (string) $request->input('scope_type');
         $state = $request->input('state') === null ? null : (bool) $request->input('state');
@@ -151,13 +189,20 @@ class FeaturesController extends Controller
 
         $this->attempt(fn () => $this->setanjo->groups()->reorderFeatures($request->input('group_id'), $request->input('keys')));
 
-        return $this->index();
+        return $this->index($request);
+    }
+
+    protected function ensureFeature(string $key): void
+    {
+        if ($this->catalog->feature($key) === null) {
+            throw DashboardException::notFound(__('setanjo::dashboard.unknown_key', ['key' => $key]));
+        }
     }
 
     protected function respond(string $key, ?Model $scope): JsonResponse
     {
         if ($scope !== null) {
-            return response()->json(['data' => collect($this->catalog->forScope($scope)['features'])->firstWhere('key', $key)]);
+            return response()->json(['data' => $this->catalog->featureForScope($key, $scope)]);
         }
 
         return response()->json(['data' => $this->catalog->feature($key)]);

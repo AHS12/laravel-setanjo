@@ -79,7 +79,7 @@ describe('Feature tables', function () {
         ]);
     });
 
-    it('resolves a three level chain in one query', function () {
+    it('resolves a three level chain in two queries', function () {
         Settings::resolveScopesUsing(fn ($subject) => [$subject, $this->company]);
         Settings::feature('tax_feature')->for($this->company)->enable();
         Settings::featureRepository()->reset();
@@ -94,11 +94,12 @@ describe('Feature tables', function () {
             return [$result, $queries];
         };
 
-        // an override in the chain answers with one query for every scope's overrides
+        // one query for the flag rows (an archived flag is off whatever its overrides say),
+        // one for every scope's overrides
         [$enabled, $queries] = $count(fn () => Settings::feature('tax_feature')->for($this->user)->enabled());
-        expect($enabled)->toBeTrue()->and($queries)->toBe(1);
+        expect($enabled)->toBeTrue()->and($queries)->toBe(2);
 
-        // falling through to global adds one query for the flag rows
+        // falling through to global needs nothing more
         Settings::featureRepository()->reset();
         [$enabled, $queries] = $count(fn () => Settings::feature('beta_feature')->for($this->user)->enabled());
         expect($enabled)->toBeTrue()->and($queries)->toBe(2);

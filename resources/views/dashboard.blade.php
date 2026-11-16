@@ -132,7 +132,7 @@
                                     <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-800">
                                         <div class="h-full rounded-full bg-emerald-500" :style="'width:' + percent(data.features.on, data.features.total) + '%'"></div>
                                     </div>
-                                    <p class="mt-1.5 text-xs text-zinc-500" x-text="data.features.on + ' on · ' + data.features.off + ' off' + (data.features.overridden ? ' · ' + data.features.overridden + ' targeted' : '')"></p>
+                                    <p class="mt-1.5 text-xs text-zinc-500" x-text="data.features.on + ' on · ' + data.features.off + ' off' + (data.features.overridden ? ' · ' + data.features.overridden + ' targeted' : '') + (data.features.scheduled ? ' · ' + data.features.scheduled + ' scheduled' : '') + (data.features.rolling_out ? ' · ' + data.features.rolling_out + ' rolling out' : '') + (data.features.archived ? ' · ' + data.features.archived + ' archived' : '')"></p>
                                 </a>
                                 <a href="#/overrides" class="s-card block p-4 transition hover:border-brand-300 dark:hover:border-brand-800">
                                     <p class="s-section-title">Overrides</p>
@@ -166,7 +166,7 @@
                                     <ul class="divide-y divide-zinc-100 dark:divide-zinc-800">
                                         <template x-for="entry in history" :key="entry.id">
                                             <li class="flex items-center gap-3 px-4 py-2.5 text-sm">
-                                                <span class="size-2 shrink-0 rounded-full" :class="{ set: 'bg-brand-500', toggle: 'bg-emerald-500', forget: 'bg-red-500', meta: 'bg-zinc-400', group: 'bg-zinc-400' }[entry.action]"></span>
+                                                <span class="size-2 shrink-0 rounded-full" :class="{ set: 'bg-brand-500', toggle: 'bg-emerald-500', rules: 'bg-amber-400', forget: 'bg-red-500', meta: 'bg-zinc-400', group: 'bg-zinc-400' }[entry.action]"></span>
                                                 <button type="button" class="truncate font-mono text-xs font-medium hover:underline" x-text="entry.key"
                                                         @click="$store.s.openKey(entry.kind === 'feature' ? 'feature' : 'setting', entry.key)"></button>
                                                 <span class="s-badge" x-text="entry.action"></span>
@@ -229,7 +229,7 @@
                         </div>
                         <div>
                             <label class="s-label" for="settings-group">Group</label>
-                            <select id="settings-group" class="s-input" x-model="group">
+                            <select x-listbox id="settings-group" class="s-input" x-model="group">
                                 <option value="">All groups</option>
                                 <template x-for="g in $store.s.groups" :key="g.id"><option :value="String(g.id)" :selected="String(g.id) === group" x-text="g.name"></option></template>
                                 <option value="null">Ungrouped</option>
@@ -237,7 +237,7 @@
                         </div>
                         <div>
                             <label class="s-label" for="settings-type">Type</label>
-                            <select id="settings-type" class="s-input" x-model="type">
+                            <select x-listbox id="settings-type" class="s-input" x-model="type">
                                 <option value="">All types</option>
                                 <template x-for="t in types" :key="t"><option :value="t" x-text="t"></option></template>
                             </select>
@@ -340,11 +340,14 @@
                         </div>
                         <div>
                             <label class="s-label" for="flags-status">Status</label>
-                            <select id="flags-status" class="s-input" x-model="status">
+                            <select x-listbox id="flags-status" class="s-input" x-model="status">
                                 <option value="">All</option>
                                 <option value="on">On</option>
                                 <option value="off">Off</option>
                                 <option value="overridden">With overrides</option>
+                                <option value="scheduled">Scheduled</option>
+                                <option value="rollout">Rolling out</option>
+                                <option value="archived">Archived</option>
                             </select>
                         </div>
                     </div>
@@ -362,7 +365,11 @@
                             <button type="button" class="s-btn ml-auto" @click="load()">Try again</button>
                         </div>
                     </template>
-                    <div x-show="!loading && !failed && rows.length === 0" class="s-card p-10 text-center text-sm text-zinc-500">
+                    <div x-show="!loading && status === 'archived' && rows.length === 0" class="s-card p-10 text-center text-sm text-zinc-500">
+                        <p class="font-medium text-zinc-700 dark:text-zinc-300">No archived flags</p>
+                        <p class="mt-1">Archive a flag your code no longer checks from its drawer. It keeps its history and can be restored.</p>
+                    </div>
+                    <div x-show="!loading && !failed && status !== 'archived' && rows.length === 0" class="s-card p-10 text-center text-sm text-zinc-500">
                         <p class="font-medium text-zinc-700 dark:text-zinc-300">No feature flags yet</p>
                         <p class="mt-1">Define one with <code class="font-mono">'feature' => true</code> or <code class="font-mono">isFeature()</code>.</p>
                     </div>
@@ -384,17 +391,24 @@
                                         <span x-show="$store.s.canManage && !filtering" class="s-handle" title="Drag to reorder or move to another group">
                                             <svg class="size-4" viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"/><circle cx="15" cy="6" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="18" r="1.5"/><circle cx="15" cy="18" r="1.5"/></svg>
                                         </span>
-                                        <span class="size-2.5 shrink-0 rounded-full" :class="row.enabled ? 'bg-emerald-500' : 'bg-zinc-300 dark:bg-zinc-600'" :title="row.enabled ? 'Enabled' : 'Disabled'"></span>
+                                        <span class="size-2.5 shrink-0 rounded-full" :class="!row.enabled || row.archived || row.window === 'pending' || row.window === 'ended' ? 'bg-zinc-300 dark:bg-zinc-600' : (limited(row) ? 'bg-amber-400' : 'bg-emerald-500')" :title="!row.enabled || row.archived || row.window === 'pending' || row.window === 'ended' ? 'Off' : (limited(row) ? 'On, for some records' : 'On')"></span>
                                         <div class="min-w-0 flex-1">
                                             <div class="flex flex-wrap items-center gap-1.5">
                                                 <a :href="'#/flags/' + encodeURIComponent(row.key)" class="font-medium hover:text-brand-600 hover:underline dark:hover:text-brand-400" x-text="row.label"></a>
                                                 <code class="font-mono text-xs text-zinc-500" x-text="row.key"></code>
                                                 <span class="s-badge" x-show="!row.defined">undefined</span>
                                                 <a class="s-badge s-badge-brand" x-show="row.override_count > 0" :href="'#/flags/' + encodeURIComponent(row.key)" x-text="row.override_count + (row.override_count === 1 ? ' override' : ' overrides')"></a>
+                                                <template x-for="badge in ruleBadges(row)" :key="badge.text">
+                                                    <span class="s-badge" :class="badge.warn && 's-badge-warn'" :title="badge.title" x-text="badge.text"></span>
+                                                </template>
                                             </div>
                                             <p class="mt-0.5 text-sm text-zinc-500" x-show="row.description" x-text="row.description"></p>
                                         </div>
-                                        <div class="flex items-center gap-3">
+                                        <div class="flex items-center gap-3" x-show="row.archived">
+                                            <button type="button" class="s-btn" x-show="$store.s.canManage" :disabled="busy === row.key" @click="restore(row)">Restore</button>
+                                            <a class="text-xs text-zinc-500 underline-offset-2 hover:underline" :href="'#/flags/' + encodeURIComponent(row.key)">Details</a>
+                                        </div>
+                                        <div class="flex items-center gap-3" x-show="!row.archived">
                                             <div class="inline-flex overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700" role="group" :aria-label="'Global state of ' + row.label">
                                                 <button type="button" class="s-seg" :disabled="!$store.s.canManage || busy === row.key" :class="{ 'bg-zinc-900 text-white hover:bg-zinc-900 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-100': row.global === null }" @click="set(row, null)" x-text="'Default (' + (row.default ? 'on' : 'off') + ')'"></button>
                                                 <button type="button" class="s-seg border-l border-zinc-300 dark:border-zinc-700" :disabled="!$store.s.canManage || busy === row.key" :class="{ 'bg-emerald-600 text-white hover:bg-emerald-600': row.global === true }" @click="set(row, true)">On</button>
@@ -422,7 +436,7 @@
                             <div class="space-y-3">
                                 <div>
                                     <label class="s-label" for="scope-type">Scope type</label>
-                                    <select id="scope-type" class="s-input" x-model="type" @change="changeType()">
+                                    <select x-listbox id="scope-type" class="s-input" x-model="type" @change="changeType()">
                                         <template x-for="scopeType in $store.s.config.scopes" :key="scopeType.alias"><option :value="scopeType.alias" :selected="scopeType.alias === type" x-text="scopeType.name"></option></template>
                                     </select>
                                 </div>
@@ -519,9 +533,10 @@
                                                         </template>
                                                     </ol>
                                                 </template>
-                                                <p x-show="!row.chain" class="text-xs text-zinc-500">
+                                                <p x-show="!row.chain && !ruleText(row)" class="text-xs text-zinc-500">
                                                     <span x-text="row.effective ? 'On' : 'Off'"></span> · from <span x-text="sourceText(row)"></span>
                                                 </p>
+                                                <p x-show="ruleText(row)" class="mt-0.5 text-xs font-medium text-amber-700 dark:text-amber-400" x-text="ruleText(row)"></p>
                                                 <p x-show="!row.allowed" class="text-xs text-zinc-500">Overrides are not allowed for this scope type.</p>
                                             </div>
                                             <div class="inline-flex overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700" role="group">
@@ -732,17 +747,18 @@
                                 </div>
                                 <div>
                                     <label class="s-label" for="history-action">Action</label>
-                                    <select id="history-action" class="s-input" x-model="filters.action" @change="filterLater()">
+                                    <select x-listbox id="history-action" class="s-input" x-model="filters.action" @change="filterLater()">
                                         <option value="">All</option>
                                         <option value="set">Set</option>
                                         <option value="forget">Forget</option>
                                         <option value="meta">Meta</option>
                                         <option value="toggle">Toggle</option>
+                                        <option value="rules">Rules</option>
                                     </select>
                                 </div>
                                 <div>
                                     <label class="s-label" for="history-scope">Scope type</label>
-                                    <select id="history-scope" class="s-input" x-model="filters.scope_type" @change="filterLater()">
+                                    <select x-listbox id="history-scope" class="s-input" x-model="filters.scope_type" @change="filterLater()">
                                         <option value="">Any</option>
                                         <template x-for="scopeType in $store.s.config.scopes" :key="scopeType.alias"><option :value="scopeType.alias" :selected="scopeType.alias === filters.scope_type" x-text="scopeType.name"></option></template>
                                     </select>
@@ -776,7 +792,7 @@
                                         <ul class="s-card divide-y divide-zinc-100 dark:divide-zinc-800">
                                             <template x-for="entry in day.entries" :key="entry.id">
                                                 <li class="flex gap-3 px-4 py-3" x-data="{ c: change(entry) }">
-                                                    <span class="mt-1.5 size-2 shrink-0 rounded-full" :class="{ set: 'bg-brand-500', toggle: 'bg-emerald-500', forget: 'bg-red-500', meta: 'bg-zinc-400', group: 'bg-zinc-400' }[entry.action]"></span>
+                                                    <span class="mt-1.5 size-2 shrink-0 rounded-full" :class="{ set: 'bg-brand-500', toggle: 'bg-emerald-500', rules: 'bg-amber-400', forget: 'bg-red-500', meta: 'bg-zinc-400', group: 'bg-zinc-400' }[entry.action]"></span>
                                                     <div class="min-w-0 flex-1 space-y-1">
                                                         <div class="flex flex-wrap items-center gap-1.5 text-sm">
                                                             <button type="button" class="font-mono text-xs font-medium hover:underline" @click="open(entry)" x-text="entry.key"></button>
@@ -892,6 +908,9 @@
                                 <span class="s-badge" x-show="!row.is_locked && row.readonly">read-only</span>
                                 <span class="s-badge bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300" x-show="row.sensitive">sensitive</span>
                                 <span class="s-badge" x-show="row.group_id" x-text="$store.s.groupName(row.group_id)"></span>
+                                <template x-for="badge in (kind === 'feature' ? ruleBadges(row) : [])" :key="badge.text">
+                                    <span class="s-badge" :class="badge.warn && 's-badge-warn'" :title="badge.title" x-text="badge.text"></span>
+                                </template>
                             </div>
                         </div>
                         <button type="button" class="s-btn-ghost" x-ref="drawerClose" @click="close()" aria-label="Close (Esc)">
@@ -929,10 +948,65 @@
                                         <button type="button" class="s-seg border-l border-zinc-300 px-3 py-1.5 dark:border-zinc-700" :disabled="!$store.s.canManage || busy === 'global'" :class="{ 'bg-red-600 text-white hover:bg-red-600': row.global === false }" @click="setGlobal(false)">Off</button>
                                     </div>
                                     <span class="text-sm text-zinc-500">
-                                        <span class="font-medium" :class="row.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-700 dark:text-zinc-300'" x-text="row.enabled ? 'On' : 'Off'"></span>
-                                        for everyone without an override
+                                        <span class="font-medium" :class="row.enabled && !row.archived ? 'text-emerald-600 dark:text-emerald-400' : 'text-zinc-700 dark:text-zinc-300'" x-text="row.enabled && !row.archived ? 'On' : 'Off'"></span>
+                                        <span x-text="row.archived ? 'everywhere while archived' : (row.enabled && ruleBadges(row).length > 0 ? 'for everyone without an override, within the rules below' : 'for everyone without an override')"></span>
                                     </span>
                                     <button type="button" class="ml-auto text-xs text-zinc-500 underline-offset-2 hover:underline" @click="editMeta()">Meta</button>
+                                </div>
+                                <p x-show="row.archived" class="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                                    Archived <span x-text="ago(row.rules.archived_at)"></span>. It reads as off everywhere, overrides included, until it is restored.
+                                </p>
+                            </section>
+                        </template>
+
+                        <!-- Rules (flag) -->
+                        <template x-if="kind === 'feature'">
+                            <section class="space-y-3">
+                                <div>
+                                    <h3 class="s-section-title">Rules</h3>
+                                    <p class="text-xs text-zinc-500">They can only turn an on flag off for some records. A record's own override always wins.</p>
+                                </div>
+                                <div class="grid gap-3 sm:grid-cols-2">
+                                    <div>
+                                        <label class="s-label" for="rule-from">On from</label>
+                                        <input id="rule-from" type="datetime-local" x-datetime placeholder="Any time" class="s-input" x-model="rules.from" :disabled="!$store.s.canManage">
+                                    </div>
+                                    <div>
+                                        <label class="s-label" for="rule-until">Off from</label>
+                                        <input id="rule-until" type="datetime-local" x-datetime placeholder="Never" class="s-input" x-model="rules.until" :disabled="!$store.s.canManage">
+                                    </div>
+                                </div>
+                                <div>
+                                    <label class="s-label" for="rule-rollout">Rollout <span class="font-normal text-zinc-500" x-text="rules.rollout === '' || rules.rollout === null ? '· everyone' : '· ' + rules.rollout + '% of records'"></span></label>
+                                    <div class="flex items-center gap-3">
+                                        <input type="range" min="0" max="100" step="1" class="min-w-0 flex-1 accent-brand-600" aria-label="Rollout percentage" :value="rules.rollout === '' || rules.rollout === null ? 100 : rules.rollout" @input="rules.rollout = Number($event.target.value)" :disabled="!$store.s.canManage">
+                                        <input id="rule-rollout" type="number" min="0" max="100" class="s-input w-20" placeholder="100" x-model="rules.rollout" :disabled="!$store.s.canManage">
+                                        <button type="button" class="text-xs text-zinc-500 underline-offset-2 hover:underline" x-show="$store.s.canManage && rules.rollout !== '' && rules.rollout !== null" @click="rules.rollout = ''">Everyone</button>
+                                    </div>
+                                    <p class="mt-1 text-xs text-zinc-500">Each record keeps its place: raising the percentage only adds records.</p>
+                                </div>
+                                <div>
+                                    <span class="s-label">Requires</span>
+                                    <div class="flex flex-wrap items-center gap-1.5">
+                                        <template x-for="required in rules.requires" :key="required">
+                                            <span class="s-badge gap-1">
+                                                <a class="hover:underline" :href="'#/flags/' + encodeURIComponent(required)" x-text="flagLabel(required)"></a>
+                                                <button type="button" class="text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200" x-show="$store.s.canManage" @click="rules.requires = rules.requires.filter((item) => item !== required)" :aria-label="'Remove ' + required">&times;</button>
+                                            </span>
+                                        </template>
+                                        <span class="text-sm text-zinc-500" x-show="rules.requires.length === 0 && !$store.s.canManage">None</span>
+                                        <select x-listbox data-placeholder data-search class="s-input w-auto py-1 text-xs" aria-label="Add a required flag" x-model="rules.add" @change="addRequirement()" x-show="$store.s.canManage && requireOptions.length > 0">
+                                            <option value="">Add a flag…</option>
+                                            <template x-for="option in requireOptions" :key="option.key">
+                                                <option :value="option.key" :data-hint="option.key" x-text="option.label"></option>
+                                            </template>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="flex flex-wrap items-center gap-2" x-show="$store.s.canManage">
+                                    <button type="button" class="s-btn-primary" :disabled="!rulesDirty || busy === 'rules'" @click="saveRules()">Save rules</button>
+                                    <button type="button" class="s-btn" x-show="rulesDirty" @click="resetRules()">Cancel</button>
+                                    <button type="button" class="s-btn ml-auto" :disabled="busy === 'archive'" @click="setArchived(!row.archived)" x-text="row.archived ? 'Restore' : 'Archive'" :title="row.archived ? 'Show the flag again and resolve it normally' : 'Hide the flag: it reads as off everywhere'"></button>
                                 </div>
                             </section>
                         </template>
@@ -941,7 +1015,7 @@
                         <section class="space-y-3">
                             <div class="flex flex-wrap items-center gap-2">
                                 <h3 class="s-section-title flex-1" x-text="(kind === 'feature' ? 'Targeting' : 'Overrides') + (overridesMeta ? ' · ' + overridesMeta.total : '')"></h3>
-                                <select class="s-input w-auto py-1 text-xs" x-model="overridesType" @change="filterOverrides()" x-show="$store.s.config.scopes.length > 1">
+                                <select x-listbox class="s-input w-auto py-1 text-xs" x-model="overridesType" @change="filterOverrides()" x-show="$store.s.config.scopes.length > 1">
                                     <option value="">All types</option>
                                     <template x-for="scopeType in $store.s.config.scopes" :key="scopeType.alias"><option :value="scopeType.alias" x-text="scopeType.name"></option></template>
                                 </select>
@@ -988,7 +1062,7 @@
                                     <div class="s-card space-y-2 p-3">
                                         <p class="text-sm font-medium">Turn on or off for a record</p>
                                         <div class="flex gap-2">
-                                            <select class="s-input w-auto" x-model="add.type" @change="searchRecords()">
+                                            <select x-listbox class="s-input w-auto" x-model="add.type" @change="searchRecords()">
                                                 <template x-for="scopeType in $store.s.config.scopes" :key="scopeType.alias"><option :value="scopeType.alias" x-text="scopeType.name"></option></template>
                                             </select>
                                             <input type="search" class="s-input" placeholder="Search by name, or paste an id" x-model="add.search" @input="searchLater()">
@@ -1016,10 +1090,10 @@
                                         <div class="mt-3 space-y-2">
                                             <p class="text-xs text-zinc-500">One per line, or separated by commas or spaces. Up to 1000 at a time. Preview shows what changes before anything is written.</p>
                                             <div class="flex flex-wrap gap-2">
-                                                <select class="s-input w-auto" x-model="bulk.type" @change="bulk.preview = null">
+                                                <select x-listbox class="s-input w-auto" x-model="bulk.type" @change="bulk.preview = null">
                                                     <template x-for="scopeType in $store.s.config.scopes" :key="scopeType.alias"><option :value="scopeType.alias" x-text="scopeType.name"></option></template>
                                                 </select>
-                                                <select class="s-input w-auto" x-model="bulk.state" @change="bulk.preview = null">
+                                                <select x-listbox class="s-input w-auto" x-model="bulk.state" @change="bulk.preview = null">
                                                     <option value="true">Turn on</option>
                                                     <option value="false">Turn off</option>
                                                     <option value="null">Remove override (inherit)</option>
@@ -1058,7 +1132,7 @@
                                     <li class="flex items-center gap-3 px-3 py-2 text-xs" x-data="{ c: change(entry) }">
                                         <span class="s-badge" x-text="entry.action"></span>
                                         <div class="min-w-0 flex-1">
-                                            <p class="truncate font-mono" x-text="c.lines ? (c.lines.length + ' changes') : (display(c.from) + ' → ' + (c.removed ? 'removed' : display(c.to)))"></p>
+                                            <p class="truncate font-mono" x-text="c.lines ? plural(c.lines.length, 'change') : (display(c.from) + ' → ' + (c.removed ? 'removed' : display(c.to)))"></p>
                                             <p class="text-zinc-500" x-text="(entry.scope ? entry.scope.label : 'global') + (entry.causer ? ' · by ' + entry.causer.label : '') + ' · ' + ago(entry.created_at)" :title="exact(entry.created_at)"></p>
                                         </div>
                                         <button type="button" class="s-btn-ghost px-1.5 py-1 text-xs" x-show="$store.s.canManage && entry.revertable" @click="revert(entry)">Revert</button>
@@ -1277,7 +1351,7 @@
                         </div>
                     </template>
                     <template x-if="kind === 'select'">
-                        <select class="s-input" x-model="draft" :disabled="disabled" :aria-label="row.label" @change="mode === 'override' && submit()" @keydown.escape="onEscape($event)">
+                        <select x-listbox class="s-input" x-model="draft" :disabled="disabled" :aria-label="row.label" @change="mode === 'override' && submit()" @keydown.enter="dirty && onEnter($event)" @keydown.escape="onEscape($event)">
                             <template x-if="draft === ''"><option value="" x-text="mode === 'override' ? 'Inherited' : '—'"></option></template>
                             <template x-for="option in editor.options(row)" :key="option.value"><option :value="option.value" :selected="option.value === draft" x-text="option.label"></option></template>
                         </select>

@@ -10,4 +10,10 @@ enum ValueSource: string
     case SCOPE = 'scope';
     case GLOBAL = 'global';
     case DEFAULT = 'default';
+
+    // Feature flags only: a rule decided the state (see FeatureRules).
+    case ARCHIVED = 'archived';
+    case SCHEDULE = 'schedule';
+    case DEPENDENCY = 'dependency';
+    case ROLLOUT = 'rollout';
 }

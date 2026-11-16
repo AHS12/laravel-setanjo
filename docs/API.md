@@ -116,7 +116,7 @@ All paths are relative to the prefix (`/api/setanjo` by default).
 
 | Method | Path | What it does |
 | --- | --- | --- |
-| GET | `/overview` | Counts: settings, flags, overrides per scope type, most overridden keys |
+| GET | `/overview` | Counts: settings, flags (on / off / scheduled / rolling out / archived), overrides per scope type, most overridden keys |
 | GET | `/settings` | Every defined or stored setting |
 | GET | `/settings/{key}` | One setting; with `scope_type` + `scope_id`, as that record sees it |
 | PUT | `/settings/{key}` | Set the value (global, or for a record) |
@@ -124,10 +124,13 @@ All paths are relative to the prefix (`/api/setanjo` by default).
 | PUT | `/settings/{key}/meta` | Replace (or merge) the stored meta |
 | GET | `/settings/{key}/overrides` | Records that override the setting |
 | POST | `/settings/order` | Put settings into a group, in order |
-| GET | `/features` | Every feature flag |
+| GET | `/features` | Every feature flag (`?archived=1`: only the archived ones) |
 | GET | `/features/{key}` | One flag; with `scope_type` + `scope_id`, as that record sees it |
 | PUT | `/features/{key}` | Turn on / off / back to default (global, or for a record) |
 | PUT | `/features/{key}/meta` | Replace (or merge) the stored meta |
+| PUT | `/features/{key}/rules` | Change the schedule, rollout or required flags |
+| POST | `/features/{key}/archive` | Archive the flag (it reads as off everywhere) |
+| POST | `/features/{key}/restore` | Restore an archived flag |
 | GET | `/features/{key}/overrides` | Records that override the flag |
 | POST | `/features/{key}/overrides` | Turn the flag on / off / inherit for many records at once |
 | POST | `/features/order` | Put flags into a group, in order |
@@ -258,19 +261,43 @@ overrides are cleared.
     "definition_meta": {},
     "stored_meta": null,
     "override_count": 12,
-    "scopes": []
+    "scopes": [],
+    "rules": {
+        "enabled_from": "2026-12-01T09:00:00+00:00",
+        "enabled_until": null,
+        "rollout": 25,
+        "requires": ["new_cart"],
+        "archived_at": null
+    },
+    "window": "pending",
+    "archived": false
 }
 ```
 
-`global` is the stored global state (`null`: not set, the default applies); `enabled` is the
-state everyone without an override gets.
+`global` is the stored global state (`null`: not set, the default applies); `enabled` is that
+state or the default: the switch the rules apply to. `window` is `pending`, `open` or `ended`
+relative to the schedule (`null` without one). Archived flags are left out of `GET /features`
+unless `?archived=1`, which lists only them.
+
+`PUT /features/{key}/rules` changes only the fields sent; `null` clears one:
+
+```json
+{"enabled_from": "2026-12-01T09:00:00Z", "enabled_until": null, "rollout": 25, "requires": ["new_cart"]}
+```
+
+Dates are ISO 8601 (a time without an offset is read in the app timezone). `enabled_until` must
+be after `enabled_from`, `rollout` is 0-100, and `requires` (up to 20 keys) refuses unknown flags,
+the flag itself and cycles with a 422. `POST /features/{key}/archive` and `/restore` take no body.
+All three answer with the flag. How the rules combine is in the README (Feature Flags → Rules).
 
 `PUT /features/{key}` body: `{"state": true}` (`false`, or `null` to go back to the default
 / inherit), plus `scope_type` + `scope_id` to set it for one record.
 
 `GET /features/{key}?scope_type=user&scope_id=42` answers like the setting version:
 `allowed`, `override` (`true` / `false` / `null` when it inherits), `effective`, `source`,
-`source_scope` and `chain`.
+`source_scope` and `chain`, plus `rules` and `detail`. When a rule decided the state, `source`
+is `archived`, `schedule`, `dependency` (`detail`: the required flag that is off) or `rollout`
+(`detail`: the record's bucket, 0-99; it gets the flag when the bucket is below the percentage).
 
 `POST /features/{key}/overrides` — the same change for many records of one type:
 
@@ -332,7 +359,7 @@ every setting and flag as the record sees it (same rows as `GET /settings/{key}?
 ### History
 
 `GET /history?key=&action=&scope_type=&scope_id=&page=&per_page=` (`action`: `set`,
-`forget`, `meta`, `toggle`). When history is off: `{"enabled": false, "message": "...", "data": []}`.
+`forget`, `meta`, `toggle`, `rules`). When history is off: `{"enabled": false, "message": "...", "data": []}`.
 
 ```json
 {
@@ -358,11 +385,13 @@ every setting and flag as the record sees it (same rows as `GET /settings/{key}?
 ```
 
 Values are stored as strings (JSON for non-strings); flag states as `"true"`, `"false"`,
-`"inherit"` (`null` for "inherit" in `new_value`).
+`"inherit"` (`null` for "inherit" in `new_value`). `rules` entries (3.2) are global and hold a
+flag's rules before and after the change in `old_meta` / `new_meta`
+(`enabled_from`, `enabled_until`, `rollout`, `requires`, `archived_at`).
 
 `POST /history/{id}/revert` writes back what the change replaced, for the same scope, and is
-recorded as a new change. 422 when it cannot (`revertable: false`: sensitive values, flag
-changes recorded before 3.1).
+recorded as a new change; for a `rules` entry it puts the flag's previous rules back. 422 when
+it cannot (`revertable: false`: sensitive values, flag changes recorded before 3.1).
 
 ### Import / export
 
