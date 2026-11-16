@@ -10,6 +10,12 @@ scripts and other services. The dashboard itself uses exactly these endpoints.
 - [Endpoints](#endpoints)
 - [Examples](#examples)
 
+**OpenAPI.** A machine-readable description of every endpoint, request and response is in
+[`openapi.yaml`](openapi.yaml) (OpenAPI 3.1). Load it into Swagger UI, Scalar, Postman or
+Insomnia, or generate a typed client from it (for example with `openapi-typescript`). Point the
+server variables at your app and prefix. The package's tests check it against the routes and
+real responses, so it stays in step with the code.
+
 ## Turning it on
 
 The API is off by default. Enable it in `.env`:
@@ -76,6 +82,8 @@ $token = $user->createToken('settings-dashboard')->plainTextToken;
   out for the global value.
 - **Sensitive values** (meta `sensitive => true`) are never returned: `value` is `null` and
   `masked` is `true`. They can still be written.
+- **Meta** (`meta`, `definition_meta`, `stored_meta`, a group's `meta`) is always a JSON object,
+  `{}` when empty, or `null` where nothing is stored.
 - **Errors**:
 
   | Status | When | Body |

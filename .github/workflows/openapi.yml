@@ -1,0 +1,30 @@
+name: OpenAPI
+
+on:
+  push:
+    paths:
+      - 'docs/openapi.yaml'
+      - 'redocly.yaml'
+      - '.github/workflows/openapi.yml'
+  pull_request:
+    paths:
+      - 'docs/openapi.yaml'
+      - 'redocly.yaml'
+      - '.github/workflows/openapi.yml'
+
+jobs:
+  lint:
+    name: openapi
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Validates docs/openapi.yaml against the OpenAPI 3.1 rules (structure, $refs, examples).
+      # tests/Feature/OpenApiSpecFeatureTest.php checks it against the routes and real responses.
+      - name: Lint the spec
+        run: npx --yes @redocly/cli@1 lint docs/openapi.yaml --format=github-actions

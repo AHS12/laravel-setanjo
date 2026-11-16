@@ -29,4 +29,5 @@ phpunit.xml
 phpstan.neon
 /docs/*
 !/docs/API.md
+!/docs/openapi.yaml
 /coverage

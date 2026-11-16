@@ -2,6 +2,7 @@
 
 namespace Ahs12\Setanjo\Http\Controllers\Dashboard;
 
+use Ahs12\Setanjo\Dashboard\Catalog;
 use Ahs12\Setanjo\Models\SettingGroup;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -80,7 +81,7 @@ class GroupsController extends Controller
             'description' => $group->description,
             'icon' => $group->icon,
             'sort_order' => (int) $group->sort_order,
-            'meta' => $group->meta,
+            'meta' => is_array($group->meta) ? Catalog::jsonObject($group->meta) : null,
         ];
     }
 }

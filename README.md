@@ -567,7 +567,8 @@ curl -H "Authorization: Bearer $TOKEN" "https://app.test/api/setanjo/features/ne
 
 It needs no session or CSRF token, always answers JSON, and works with the dashboard turned
 off. Read-only mode and the `manageSetanjo` / `Setanjo::manage()` rules apply to it as well.
-Every endpoint, with request and response examples: [docs/API.md](docs/API.md).
+Every endpoint, with request and response examples: [docs/API.md](docs/API.md). An OpenAPI 3.1
+spec for Swagger UI, Postman or client generators: [docs/openapi.yaml](docs/openapi.yaml).
 
 ## Commands
 
