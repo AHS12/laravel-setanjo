@@ -10,9 +10,11 @@ use Ahs12\Setanjo\Models\SettingHistory;
 use Ahs12\Setanjo\Setanjo;
 use Ahs12\Setanjo\SetanjoManager;
 use Ahs12\Setanjo\Tests\Models\User;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\File;
 
@@ -160,6 +162,28 @@ describe('Archived flags', function () {
 
         expect(Settings::feature('beta_feature')->for($this->user)->enabled())->toBeTrue();
     });
+});
+
+describe('Before the 3.2 migration', function () {
+    it('reads flags without the rule columns, even in strict mode', function () {
+        Settings::feature('beta_feature')->for($this->user)->disable();
+        $migration = include __DIR__.'/../../database/migrations/add_v3_2_columns_to_setanjo_features_table.php.stub';
+        $migration->down();
+        Settings::flushCache();
+        Model::preventAccessingMissingAttributes();
+
+        try {
+            expect(Settings::feature('beta_feature')->enabled())->toBeTrue()
+                ->and(Settings::feature('beta_feature')->for($this->user)->enabled())->toBeFalse()
+                ->and(Settings::feature('beta_feature')->rules()->isEmpty())->toBeTrue();
+        } finally {
+            Model::preventAccessingMissingAttributes(false);
+            $migration->up();
+        }
+    })->skip(
+        fn () => DB::connection()->getDriverName() !== 'sqlite',
+        'Dropping columns commits the test transaction on MySQL and Postgres.',
+    );
 });
 
 describe('Rule changes', function () {
